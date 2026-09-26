@@ -788,6 +788,246 @@ local script_handler = {}; do
     end
 end
 
+    -- ================================================================
+    --  GEARS & OTHER  (added features)
+    --
+    --  PLACEHOLDERS: this script never referenced the gear equip /
+    --  unequip remotes, so their real remote names are NOT in the file
+    --  and none are invented here. They are left nil on purpose - spy
+    --  the remotes once with your executor's remote viewer and fill
+    --  them in below. Everything else works out of the box.
+    -- ================================================================
+    local GEAR_SERVICE = 'GearService' -- service already used by roll_gear()
+    local GEAR_EQUIP_REMOTE = nil   -- PLACEHOLDER: set to the real equip remote name
+    local GEAR_UNEQUIP_REMOTE = nil -- PLACEHOLDER: set to the real unequip remote name
+    local MAX_GEAR_SLOTS = 3        -- PLACEHOLDER: set this to your gear slot count
+
+    -- parse "x1.5" / "+25%" style multiplier text out of a label
+    local function parse_multiplier(text)
+        if (type(text) ~= 'string') then return nil end
+
+        text = text:lower()
+
+        local mult = text:match('x%s*(%d+%.?%d*)')
+        if (mult) then return tonumber(mult) end
+
+        local pct = text:match('+%s*(%d+%.?%d*)%s*%%')
+        if (pct) then return 1 + (tonumber(pct) / 100) end
+
+        return nil
+    end
+
+    -- read one gear entry from the inventory UI (mirrors the PowerUps
+    -- path pattern: playergui.Frames.PlayerInventory.<Section>...)
+    local function scan_gear_entry(entry)
+        local info = {name = entry.Name, muscle = 0, cash = 0}
+
+        for _, label in ipairs(entry:GetDescendants()) do
+            if (label:IsA('TextLabel') or label:IsA('TextButton')) then
+                local text = label.Text or ''
+                local value = parse_multiplier(text)
+                if value then
+                    text = text:lower()
+
+                    if (text:find('cash') or text:find('money')) then
+                        info.cash = math.max(info.cash, value)
+                    elseif (text:find('muscle')) then
+                        info.muscle = math.max(info.muscle, value)
+                    else
+                        -- unlabelled multiplier: counts for both
+                        info.muscle = math.max(info.muscle, value)
+                        info.cash = math.max(info.cash, value)
+                    end
+                end
+            end
+        end
+
+        return info
+    end
+
+    -- discover the gear list in the inventory UI at runtime
+    local function collect_gears()
+        local gears = {}
+
+        local inventory = playergui.Frames and playergui.Frames:FindFirstChild('PlayerInventory')
+        if not inventory then return gears end
+
+        local gear_section = inventory:FindFirstChild('Gears', true)
+        if not gear_section then return gears end
+
+        local list = gear_section:FindFirstChild('List', true) or gear_section
+
+        for _, entry in ipairs(list:GetChildren()) do
+            if (entry:IsA('Frame') or entry:IsA('ImageButton')) then
+                local info = scan_gear_entry(entry)
+                if (info.muscle > 0 or info.cash > 0) then
+                    table.insert(gears, info)
+                end
+            end
+        end
+
+        return gears
+    end
+
+    function script_handler:equip_best_gears(kind)
+        local gears = collect_gears()
+        if (#gears == 0) then
+            UI.Banner({Text = 'No gears found - open your inventory once, then try again.'})
+            return
+        end
+
+        table.sort(gears, function(a, b)
+            return (a[kind] or 0) > (b[kind] or 0)
+        end)
+
+        if (not GEAR_EQUIP_REMOTE) then
+            UI.Banner({Text = 'PLACEHOLDER: gear equip remote not set - edit GEAR_EQUIP_REMOTE in the script. Best by ' .. kind .. ': ' .. gears[1].name})
+            return
+        end
+
+        local equipped = 0
+        for index, gear in ipairs(gears) do
+            if (equipped >= MAX_GEAR_SLOTS) then break end
+
+            local ok = pcall(function()
+                self:call(GEAR_SERVICE, 'RF', GEAR_EQUIP_REMOTE, gear.name)
+            end)
+
+            if ok then
+                equipped += 1
+            end
+        end
+
+        UI.Banner({Text = ('Equipped %d best %s gear(s).'):format(equipped, kind)})
+    end
+
+    function script_handler:unequip_gears()
+        if (not GEAR_UNEQUIP_REMOTE) then
+            UI.Banner({Text = 'PLACEHOLDER: gear unequip remote not set - edit GEAR_UNEQUIP_REMOTE in the script.'})
+            return
+        end
+
+        pcall(function()
+            self:call(GEAR_SERVICE, 'RF', GEAR_UNEQUIP_REMOTE)
+        end)
+
+        UI.Banner({Text = 'Unequip request sent.'})
+    end
+
+    -- ----------------------------------------------------------------
+    --  OTHER: Server Hop + Close UI keybind
+    -- ----------------------------------------------------------------
+    local function get_http_fn()
+        local ok, fn
+
+        ok, fn = pcall(function() return syn and syn.request end)
+        if (ok and fn) then return fn end
+
+        ok, fn = pcall(function() return http and http.request end)
+        if (ok and fn) then return fn end
+
+        ok, fn = pcall(function() return http_request end)
+        if (ok and fn) then return fn end
+
+        ok, fn = pcall(function() return request end)
+        if (ok and fn) then return fn end
+
+        return nil
+    end
+
+    function script_handler:server_hop()
+        local place_id = game.PlaceId
+        local job_id = game.JobId
+        local teleport = service.TeleportService
+
+        local ok = pcall(function()
+            local http_fn = get_http_fn()
+            assert(http_fn, 'no http request function available in this executor')
+
+            local response = http_fn({
+                Url = ('https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100&excludeFullGames=true'):format(place_id),
+                Method = 'GET'
+            })
+
+            local decoded = service.HttpService:JSONDecode(response.Body)
+            local candidates = {}
+
+            for _, server in ipairs(decoded.data or {}) do
+                if (server.id ~= job_id and (server.playing or 0) < (server.maxPlayers or 0)) then
+                    table.insert(candidates, server.id)
+                end
+            end
+
+            if (#candidates == 0) then
+                -- no other public server with room: plain teleport fallback
+                teleport:Teleport(place_id, client)
+                return
+            end
+
+            teleport:TeleportToPlaceInstance(place_id, candidates[math.random(1, #candidates)], client)
+        end)
+
+        if (not ok) then
+            pcall(function() teleport:Teleport(place_id, client) end)
+        end
+    end
+
+    -- Close UI: Material (this build) has no keybind element, so a
+    -- rebindable key is handled through UserInputService. The ScreenGui
+    -- is only hidden (Enabled = false), never destroyed, so the same
+    -- key reopens it.
+    local close_ui_key = Enum.KeyCode.RightControl
+    local waiting_for_bind = false
+    local CloseUIKeyLabel
+
+    local function get_ui_gui()
+        local name = '@cats - Gym League'
+        local containers = {}
+
+        if gethui then table.insert(containers, gethui()) end
+
+        local ok, coregui = pcall(function() return service.CoreGui end)
+        if (ok and coregui) then table.insert(containers, coregui) end
+
+        table.insert(containers, playergui)
+
+        for _, container in ipairs(containers) do
+            local gui = container and container:FindFirstChild(name)
+            if (gui and gui:IsA('ScreenGui')) then return gui end
+        end
+
+        return getgenv().OldInstance
+    end
+
+    local function toggle_ui()
+        local gui = get_ui_gui()
+        if not gui then return end
+
+        gui.Enabled = not gui.Enabled
+    end
+
+    service.UserInputService.InputBegan:Connect(function(input, processed)
+        if processed then return end
+
+        if waiting_for_bind then
+            if (input.UserInputType == Enum.UserInputType.Keyboard) then
+                close_ui_key = input.KeyCode
+                waiting_for_bind = false
+
+                if CloseUIKeyLabel then
+                    CloseUIKeyLabel:SetText('Current Keybind: ' .. close_ui_key.Name)
+                end
+
+                Config.save('close_ui_key', close_ui_key.Name)
+            end
+            return
+        end
+
+        if (input.KeyCode == close_ui_key) then
+            toggle_ui()
+        end
+    end)
+
 local handler = script_handler.new()
 
 
@@ -1145,6 +1385,56 @@ local progression_tab = UI.New({Title = 'Progression'}); do
     PersistentToggle(progression_tab, 'auto_upgrade_training_mods', {Text = 'Auto Upgrade Training Mods', Callback = function(self)
         handler.auto_trainmods = self
     end, Menu = { Information = function(self) UI.Banner({Text = "Buys training modifier upgrades when affordable." }) end}})
+end
+
+local gears_tab = UI.New({Title = 'Gears'}); do
+    gears_tab.Label({Text = 'Gears'})
+
+    gears_tab.Button({Text = 'Equip Best Gears (Muscle)', Callback = function()
+        handler:equip_best_gears('muscle')
+    end, Menu = { Information = function(self) UI.Banner({Text = "Equips your gears with the highest muscle multiplier." }) end}})
+
+    gears_tab.Button({Text = 'Equip Best Gears (Cash)', Callback = function()
+        handler:equip_best_gears('cash')
+    end, Menu = { Information = function(self) UI.Banner({Text = "Equips your gears with the highest cash multiplier." }) end}})
+
+    gears_tab.Button({Text = 'Unequip Gears', Callback = function()
+        handler:unequip_gears()
+    end, Menu = { Information = function(self) UI.Banner({Text = "Unequips whatever gears you are wearing." }) end}})
+end
+
+local other_tab = UI.New({Title = 'Other'}); do
+    other_tab.Label({Text = 'Other'})
+
+    other_tab.Button({Text = 'Server Hop', Callback = function()
+        handler:server_hop()
+    end, Menu = { Information = function(self) UI.Banner({Text = "Moves you to a different public server." }) end}})
+
+    other_tab.Button({Text = 'Close UI', Callback = function()
+        toggle_ui()
+    end, Menu = { Information = function(self) UI.Banner({Text = "Hides the UI. Press your keybind to reopen it." }) end}})
+
+    CloseUIKeyLabel = other_tab.TextField({Text = 'Current Keybind: ' .. close_ui_key.Name, Type = 'NoSuggestions'})
+
+    other_tab.Button({Text = 'Set Keybind (press a key after clicking)', Callback = function()
+        waiting_for_bind = true
+        UI.Banner({Text = 'Press any keyboard key now to set the Close UI keybind.'})
+    end})
+end
+
+-- restore the saved Close UI keybind (not a UI element, so it is not
+-- handled by Config.load's registry restore)
+do
+    local saved_key = Config.data['close_ui_key']
+    if (type(saved_key) == 'string') then
+        local ok, key = pcall(function() return Enum.KeyCode[saved_key] end)
+        if (ok and key) then
+            close_ui_key = key
+            if CloseUIKeyLabel then
+                CloseUIKeyLabel:SetText('Current Keybind: ' .. key.Name)
+            end
+        end
+    end
 end
 
 Config.load()
