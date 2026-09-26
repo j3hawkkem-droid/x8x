@@ -789,20 +789,54 @@ local script_handler = {}; do
 end
 
     -- ================================================================
-    --  GEARS & OTHER  (added features)
+    --  GEARS & OTHER  (added features, v2)
     --
-    --  PLACEHOLDERS: this script never referenced the gear equip /
-    --  unequip remotes, so their real remote names are NOT in the file
-    --  and none are invented here. They are left nil on purpose - spy
-    --  the remotes once with your executor's remote viewer and fill
-    --  them in below. Everything else works out of the box.
+    --  This game's gear equip/unequip remote and gear storage are not
+    --  referenced anywhere in the original script, so instead of
+    --  hardcoding guesses the script now DISCOVERS them at runtime:
+    --    * "Scan Gear Remotes" (Gears tab) lists every Remote that
+    --      looks gear/equip/tool related and prints its full path.
+    --    * Gears are searched in Backpack, Character and PlayerGui,
+    --      with a debug print of what each location contained.
+    --  If something still fails, send the printed [Gears] output back.
     -- ================================================================
-    local GEAR_SERVICE = 'GearService' -- service already used by roll_gear()
-    local GEAR_EQUIP_REMOTE = nil   -- PLACEHOLDER: set to the real equip remote name
-    local GEAR_UNEQUIP_REMOTE = nil -- PLACEHOLDER: set to the real unequip remote name
-    local MAX_GEAR_SLOTS = 3        -- PLACEHOLDER: set this to your gear slot count
+    local MAX_GEAR_SLOTS = 3
 
-    -- parse "x1.5" / "+25%" style multiplier text out of a label
+    local gear_state = {
+        equip_remote = nil,   -- Instance, filled by scan or manual path
+        unequip_remote = nil, -- Instance
+        manual_path = nil,    -- string set from the Gears tab textbox
+    }
+
+    local function dbg(...)
+        print('[Gears]', ...)
+    end
+
+    local function is_gearish(name: string): boolean
+        name = string.lower(name or '')
+        return name:find('gear') ~= nil
+            or name:find('equip') ~= nil
+            or name:find('tool') ~= nil
+    end
+
+    -- resolve a "A.B.C" instance path (from game) into an Instance
+    local function resolve_path(path: string)
+        if (type(path) ~= 'string' or path == '') then return nil end
+
+        local ok, obj = pcall(function()
+            local current = game
+            for _, part in ipairs(string.split(path, '.')) do
+                if (part ~= 'game' and part ~= 'Game') then
+                    current = current:WaitForChild(part, 3)
+                end
+            end
+            return current
+        end)
+
+        if (ok and obj) then return obj end
+        return nil
+    end
+
     local function parse_multiplier(text)
         if (type(text) ~= 'string') then return nil end
 
@@ -817,10 +851,9 @@ end
         return nil
     end
 
-    -- read one gear entry from the inventory UI (mirrors the PowerUps
-    -- path pattern: playergui.Frames.PlayerInventory.<Section>...)
+    -- read multiplier labels out of one inventory gear entry
     local function scan_gear_entry(entry)
-        local info = {name = entry.Name, muscle = 0, cash = 0}
+        local info = {name = entry.Name, muscle = 0, cash = 0, instance = nil}
 
         for _, label in ipairs(entry:GetDescendants()) do
             if (label:IsA('TextLabel') or label:IsA('TextButton')) then
@@ -834,7 +867,6 @@ end
                     elseif (text:find('muscle')) then
                         info.muscle = math.max(info.muscle, value)
                     else
-                        -- unlabelled multiplier: counts for both
                         info.muscle = math.max(info.muscle, value)
                         info.cash = math.max(info.cash, value)
                     end
@@ -845,73 +877,265 @@ end
         return info
     end
 
-    -- discover the gear list in the inventory UI at runtime
+    -- ----------------------------------------------------------------
+    --  Gear enumeration: Backpack -> Character -> PlayerGui, with
+    --  debug prints for every location so failures are visible.
+    -- ----------------------------------------------------------------
     local function collect_gears()
         local gears = {}
+        local by_name = {}
 
-        local inventory = playergui.Frames and playergui.Frames:FindFirstChild('PlayerInventory')
-        if not inventory then return gears end
+        local function add_gear(name: string, instance)
+            if (not name or name == '') then return end
 
-        local gear_section = inventory:FindFirstChild('Gears', true)
-        if not gear_section then return gears end
+            local existing = by_name[name]
+            if existing then
+                if (instance and not existing.instance) then
+                    existing.instance = instance
+                end
+                return
+            end
 
-        local list = gear_section:FindFirstChild('List', true) or gear_section
+            local info = {name = name, muscle = 0, cash = 0, instance = instance}
+            by_name[name] = info
+            table.insert(gears, info)
+        end
 
-        for _, entry in ipairs(list:GetChildren()) do
-            if (entry:IsA('Frame') or entry:IsA('ImageButton')) then
-                local info = scan_gear_entry(entry)
-                if (info.muscle > 0 or info.cash > 0) then
-                    table.insert(gears, info)
+        -- 1) Backpack tools
+        local backpack = client:FindFirstChildWhichIsA('Backpack')
+        dbg('Backpack:', backpack and ('found, ' .. #backpack:GetChildren() .. ' children') or 'NOT FOUND')
+        if backpack then
+            for _, item in ipairs(backpack:GetChildren()) do
+                dbg('  Backpack item:', item.Name, '(' .. item.ClassName .. ')')
+                if (item:IsA('Tool') and is_gearish(item.Name)) then
+                    add_gear(item.Name, item)
                 end
             end
+        end
+
+        -- 2) Character (currently worn/held gears)
+        local char = client.Character
+        dbg('Character:', char and 'found' or 'NOT FOUND')
+        if char then
+            for _, item in ipairs(char:GetChildren()) do
+                if (item:IsA('Tool') and is_gearish(item.Name)) then
+                    dbg('  Character tool:', item.Name)
+                    add_gear(item.Name, item)
+                end
+            end
+        end
+
+        -- 3) PlayerGui inventory labels (multiplier info lives here)
+        local frames = playergui:FindFirstChild('Frames')
+        dbg('PlayerGui.Frames:', frames and 'found' or 'NOT FOUND')
+        if frames then
+            local inventory = frames:FindFirstChild('PlayerInventory', true)
+            dbg('PlayerInventory:', inventory and 'found' or 'NOT FOUND')
+            if inventory then
+                local gear_section = inventory:FindFirstChild('Gears', true)
+                    or inventory:FindFirstChild('Gear', true)
+                dbg('Gears section:', gear_section and ('found (' .. gear_section.Name .. ')') or 'NOT FOUND')
+
+                if gear_section then
+                    for _, entry in ipairs(gear_section:GetDescendants()) do
+                        if (entry:IsA('Frame') or entry:IsA('ImageButton') or entry:IsA('TextButton')) then
+                            local info = scan_gear_entry(entry)
+                            if (info.muscle > 0 or info.cash > 0) then
+                                dbg('  Inventory gear:', info.name,
+                                    'muscle x' .. info.muscle, 'cash x' .. info.cash)
+                                add_gear(info.name, nil)
+
+                                local existing = by_name[info.name]
+                                existing.muscle = info.muscle
+                                existing.cash = info.cash
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        if (#gears == 0) then
+            dbg('NO gears found in Backpack, Character or PlayerGui - open your inventory once so it loads, then try again.')
         end
 
         return gears
     end
 
+    -- ----------------------------------------------------------------
+    --  Remote discovery
+    -- ----------------------------------------------------------------
+    local function call_remote(remote, ...)
+        if (not remote) then return false end
+
+        local args = {...}
+
+        local ok = pcall(function()
+            if (remote:IsA('RemoteFunction')) then
+                remote:InvokeServer(unpack(args))
+            elseif (remote:IsA('RemoteEvent')) then
+                remote:FireServer(unpack(args))
+            else
+                error('not a remote')
+            end
+        end)
+
+        return ok
+    end
+
+    -- try several argument shapes, since the server signature is unknown
+    function script_handler:invoke_gear_remote(remote, gear_name: string)
+        if (call_remote(remote, gear_name)) then return true end
+        if (call_remote(remote, gear_name, true)) then return true end
+        if (call_remote(remote, {name = gear_name})) then return true end
+        if (call_remote(remote, {gearName = gear_name})) then return true end
+        return false
+    end
+
+    function script_handler:scan_gear_remotes(assign: boolean)
+        local found = {}
+
+        local roots = {}
+        table.insert(roots, replicatedstorage)
+
+        local gear_service = self:get_knit_service('GearService')
+        dbg('GearService knit folder:', gear_service and gear_service:GetFullName() or 'NOT FOUND')
+        if gear_service then table.insert(roots, gear_service) end
+
+        for _, root in ipairs(roots) do
+            for _, obj in ipairs(root:GetDescendants()) do
+                if (obj:IsA('RemoteEvent') or obj:IsA('RemoteFunction')) then
+                    if (is_gearish(obj.Name) or is_gearish(obj.Parent and obj.Parent.Name)) then
+                        table.insert(found, obj)
+                    end
+                end
+            end
+        end
+
+        dbg(('scan finished: %d gear-ish remote(s) found'):format(#found))
+        for _, obj in ipairs(found) do
+            dbg('  ' .. obj.ClassName .. ' -> ' .. obj:GetFullName())
+        end
+
+        if (not assign) then return found end
+
+        -- auto-pick: equip remote, then unequip remote
+        gear_state.equip_remote = nil
+        gear_state.unequip_remote = nil
+
+        for _, obj in ipairs(found) do
+            local name = string.lower(obj.Name)
+
+            if (not gear_state.equip_remote and name:find('equip') and not name:find('un')) then
+                gear_state.equip_remote = obj
+            elseif (not gear_state.unequip_remote and (name:find('unequip') or name:find('un_') or name:find('unequipped'))) then
+                gear_state.unequip_remote = obj
+            end
+        end
+
+        dbg('auto-picked equip remote:', gear_state.equip_remote and gear_state.equip_remote:GetFullName() or 'none')
+        dbg('auto-picked unequip remote:', gear_state.unequip_remote and gear_state.unequip_remote:GetFullName() or 'none')
+
+        if (gear_state.equip_remote or gear_state.unequip_remote) then
+            UI.Banner({Text = 'Scan done (' .. #found .. ' remote(s)). Picked: '
+                .. (gear_state.equip_remote and gear_state.equip_remote.Name or 'no equip') .. ' / '
+                .. (gear_state.unequip_remote and gear_state.unequip_remote.Name or 'no unequip')
+                .. '. Check console output for the full list.'})
+        else
+            UI.Banner({Text = 'Scan found ' .. #found .. ' remote(s) but could not auto-pick. Check console output and set the manual path.'})
+        end
+
+        return found
+    end
+
+    function script_handler:get_gear_remote(kind: string)
+        -- manual path always wins
+        if gear_state.manual_path then
+            local manual = resolve_path(gear_state.manual_path)
+            if (manual and (manual:IsA('RemoteEvent') or manual:IsA('RemoteFunction'))) then
+                return manual
+            end
+            dbg('manual path did not resolve to a remote:', gear_state.manual_path)
+        end
+
+        if (kind == 'unequip') then
+            return gear_state.unequip_remote
+        end
+        return gear_state.equip_remote
+    end
+
     function script_handler:equip_best_gears(kind)
         local gears = collect_gears()
         if (#gears == 0) then
-            UI.Banner({Text = 'No gears found - open your inventory once, then try again.'})
+            UI.Banner({Text = 'No gears found - open your inventory once, then try again. Check console [Gears] output.'})
             return
         end
 
-        table.sort(gears, function(a, b)
-            return (a[kind] or 0) > (b[kind] or 0)
-        end)
+        local any_multiplier = false
+        for _, gear in ipairs(gears) do
+            if ((gear[kind] or 0) > 0) then
+                any_multiplier = true
+                break
+            end
+        end
 
-        if (not GEAR_EQUIP_REMOTE) then
-            UI.Banner({Text = 'PLACEHOLDER: gear equip remote not set - edit GEAR_EQUIP_REMOTE in the script. Best by ' .. kind .. ': ' .. gears[1].name})
+        if any_multiplier then
+            table.sort(gears, function(a, b)
+                return (a[kind] or 0) > (b[kind] or 0)
+            end)
+        else
+            dbg('no multiplier labels readable - using inventory order')
+        end
+
+        dbg('best ' .. kind .. ' gear:', gears[1].name)
+
+        local remote = self:get_gear_remote('equip')
+        if (not remote) then
+            UI.Banner({Text = 'No equip remote yet - click "Scan Gear Remotes" (Gears tab) or set the manual path. Check console for the list.'})
             return
         end
 
         local equipped = 0
-        for index, gear in ipairs(gears) do
+        for _, gear in ipairs(gears) do
             if (equipped >= MAX_GEAR_SLOTS) then break end
 
-            local ok = pcall(function()
-                self:call(GEAR_SERVICE, 'RF', GEAR_EQUIP_REMOTE, gear.name)
-            end)
-
-            if ok then
+            if (self:invoke_gear_remote(remote, gear.name)) then
                 equipped += 1
             end
         end
 
-        UI.Banner({Text = ('Equipped %d best %s gear(s).'):format(equipped, kind)})
+        UI.Banner({Text = ('Equipped %d of %d scanned gear(s) for %s.'):format(equipped, #gears, kind)})
     end
 
     function script_handler:unequip_gears()
-        if (not GEAR_UNEQUIP_REMOTE) then
-            UI.Banner({Text = 'PLACEHOLDER: gear unequip remote not set - edit GEAR_UNEQUIP_REMOTE in the script.'})
-            return
+        local char = get_char(client)
+        local humanoid = get_hum(char)
+
+        -- unequip everything currently held/worn (Tools)
+        if humanoid then
+            pcall(function() humanoid:UnequipTools() end)
         end
 
-        pcall(function()
-            self:call(GEAR_SERVICE, 'RF', GEAR_UNEQUIP_REMOTE)
-        end)
+        local remote = self:get_gear_remote('unequip')
+        if remote then
+            -- try bare call, then per-gear calls for anything still equipped
+            call_remote(remote)
 
-        UI.Banner({Text = 'Unequip request sent.'})
+            local char2 = get_char(client)
+            if char2 then
+                for _, item in ipairs(char2:GetChildren()) do
+                    if (item:IsA('Tool') and is_gearish(item.Name)) then
+                        call_remote(remote, item.Name)
+                    end
+                end
+            end
+        end
+
+        if (humanoid or remote) then
+            UI.Banner({Text = 'Unequip request sent.'})
+        else
+            UI.Banner({Text = 'Could not unequip - click "Scan Gear Remotes" (Gears tab) and check console output.'})
+        end
     end
 
     -- ----------------------------------------------------------------
@@ -959,7 +1183,6 @@ end
             end
 
             if (#candidates == 0) then
-                -- no other public server with room: plain teleport fallback
                 teleport:Teleport(place_id, client)
                 return
             end
@@ -972,13 +1195,18 @@ end
         end
     end
 
-    -- Close UI: Material (this build) has no keybind element, so a
-    -- rebindable key is handled through UserInputService. The ScreenGui
-    -- is only hidden (Enabled = false), never destroyed, so the same
-    -- key reopens it.
-    local close_ui_key = Enum.KeyCode.RightControl
+    -- Close UI: Material (this build) has no keybind element, so the
+    -- keybind lives on a Button next to "Close UI" (wired in the UI
+    -- block below) and the actual key handling happens here through
+    -- UserInputService. The ScreenGui is only hidden (Enabled = false),
+    -- never destroyed, so the same key reopens it.
+    local close_ui_key = Enum.KeyCode.RightShift
     local waiting_for_bind = false
-    local CloseUIKeyLabel
+    local KeybindButton -- set by the UI block below
+
+    -- Config is declared further down in the script, so the keybind
+    -- block reaches it through this bridge once the UI is built.
+    local keybind_bridge = {}
 
     local function get_ui_gui()
         local name = '@cats - Gym League'
@@ -1006,27 +1234,44 @@ end
         gui.Enabled = not gui.Enabled
     end
 
-    service.UserInputService.InputBegan:Connect(function(input, processed)
-        if processed then return end
+    local function set_close_ui_key(key)
+        close_ui_key = key
+        waiting_for_bind = false
 
+        if (KeybindButton and type(KeybindButton.SetText) == 'function') then
+            pcall(function() KeybindButton:SetText('Keybind: ' .. key.Name) end)
+        end
+
+        if (type(keybind_bridge.save) == 'function') then
+            pcall(keybind_bridge.save, key.Name)
+        end
+    end
+
+    service.UserInputService.InputBegan:Connect(function(input, processed)
+        -- while (re)binding: capture the next keyboard key and never
+        -- toggle the UI with that same keypress. Escape cancels.
         if waiting_for_bind then
             if (input.UserInputType == Enum.UserInputType.Keyboard) then
-                close_ui_key = input.KeyCode
-                waiting_for_bind = false
+                if (input.KeyCode ~= Enum.KeyCode.Escape) then
+                    set_close_ui_key(input.KeyCode)
+                else
+                    waiting_for_bind = false
 
-                if CloseUIKeyLabel then
-                    CloseUIKeyLabel:SetText('Current Keybind: ' .. close_ui_key.Name)
+                    if (KeybindButton and type(KeybindButton.SetText) == 'function') then
+                        pcall(function() KeybindButton:SetText('Keybind: ' .. close_ui_key.Name) end)
+                    end
                 end
-
-                Config.save('close_ui_key', close_ui_key.Name)
             end
             return
         end
+
+        if processed then return end
 
         if (input.KeyCode == close_ui_key) then
             toggle_ui()
         end
     end)
+
 
 local handler = script_handler.new()
 
@@ -1401,6 +1646,17 @@ local gears_tab = UI.New({Title = 'Gears'}); do
     gears_tab.Button({Text = 'Unequip Gears', Callback = function()
         handler:unequip_gears()
     end, Menu = { Information = function(self) UI.Banner({Text = "Unequips whatever gears you are wearing." }) end}})
+
+    gears_tab.Label({Text = 'Gear Remote Discovery'})
+
+    gears_tab.Button({Text = 'Scan Gear Remotes', Callback = function()
+        handler:scan_gear_remotes(true)
+    end, Menu = { Information = function(self) UI.Banner({Text = "Lists every gear/equip/tool remote in the console and auto-picks the equip/unequip ones." }) end}})
+
+    gears_tab.TextField({Text = 'Manual remote path (e.g. ReplicatedStorage.Services.GearService.RF.EquipGear)', Type = 'NoSuggestions', Callback = function(value)
+        gear_state.manual_path = (type(value) == 'string' and value ~= '') and value or nil
+        UI.Banner({Text = gear_state.manual_path and ('Manual gear remote path set: ' .. gear_state.manual_path) or 'Manual gear remote path cleared.'})
+    end})
 end
 
 local other_tab = UI.New({Title = 'Other'}); do
@@ -1414,28 +1670,31 @@ local other_tab = UI.New({Title = 'Other'}); do
         toggle_ui()
     end, Menu = { Information = function(self) UI.Banner({Text = "Hides the UI. Press your keybind to reopen it." }) end}})
 
-    CloseUIKeyLabel = other_tab.TextField({Text = 'Current Keybind: ' .. close_ui_key.Name, Type = 'NoSuggestions'})
-
-    other_tab.Button({Text = 'Set Keybind (press a key after clicking)', Callback = function()
+    -- keybind button shown NEXT TO Close UI, pre-bound to RightShift;
+    -- clicking it waits for the next key press and rebinds to that key
+    KeybindButton = other_tab.Button({Text = 'Keybind: ' .. close_ui_key.Name, Callback = function()
         waiting_for_bind = true
-        UI.Banner({Text = 'Press any keyboard key now to set the Close UI keybind.'})
-    end})
+        KeybindButton:SetText('Keybind: ... (press a key)')
+        UI.Banner({Text = 'Press any keyboard key now to set the Close UI keybind. Escape cancels.'})
+    end, Menu = { Information = function(self) UI.Banner({Text = "Shows the current Close UI keybind. Click it, then press a key to rebind." }) end}})
 end
 
--- restore the saved Close UI keybind (not a UI element, so it is not
--- handled by Config.load's registry restore)
+-- wire the keybind save bridge to the config system (declared later in
+-- the script) and restore a previously saved keybind
+keybind_bridge.save = function(name)
+    Config.save('close_ui_key', name)
+end
+
 do
     local saved_key = Config.data['close_ui_key']
     if (type(saved_key) == 'string') then
         local ok, key = pcall(function() return Enum.KeyCode[saved_key] end)
         if (ok and key) then
-            close_ui_key = key
-            if CloseUIKeyLabel then
-                CloseUIKeyLabel:SetText('Current Keybind: ' .. key.Name)
-            end
+            set_close_ui_key(key)
         end
     end
 end
+
 
 Config.load()
 
