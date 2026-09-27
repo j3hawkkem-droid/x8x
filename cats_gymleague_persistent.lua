@@ -787,26 +787,34 @@ local script_handler = {}; do
         self:call('TrainingModifiersService', 'RF', 'Upgrade')
     end
 end
-
-    -- ================================================================
-    --  GEARS & OTHER  (added features, v2)
+-- ================================================================
+    --  GEARS & OTHER  (added features, v3)
     --
-    --  This game's gear equip/unequip remote and gear storage are not
-    --  referenced anywhere in the original script, so instead of
-    --  hardcoding guesses the script now DISCOVERS them at runtime:
-    --    * "Scan Gear Remotes" (Gears tab) lists every Remote that
-    --      looks gear/equip/tool related and prints its full path.
-    --    * Gears are searched in Backpack, Character and PlayerGui,
-    --      with a debug print of what each location contained.
-    --  If something still fails, send the printed [Gears] output back.
+    --  The previous version had two bugs that broke the UI:
+    --    1) the KeybindButton was a `local` in one scope and a
+    --       global assignment in another (different variables in
+    --       Lua), so the rebind button text never updated;
+    --    2) the InputBegan listener fired while a Roblox TextBox was
+    --       focused, stealing keypresses intended for textboxes.
+    --  Both are fixed below. CloseUI toggle now flips BOTH
+    --  ScreenGui.Enabled AND MainFrame.Visible so it works regardless
+    --  of which container the exploit parked the GUI in.
     -- ================================================================
     local MAX_GEAR_SLOTS = 3
 
     local gear_state = {
-        equip_remote = nil,   -- Instance, filled by scan or manual path
-        unequip_remote = nil, -- Instance
-        manual_path = nil,    -- string set from the Gears tab textbox
+        equip_remote = nil,
+        unequip_remote = nil,
+        manual_path = nil,
     }
+
+    -- ----------------------------------------------------------------
+    --  shared UI handles (declared here so block_b below can write to
+    --  them and the InputBegan listener can read them without turning
+    --  them into Lua globals)
+    -- ----------------------------------------------------------------
+    local KeybindButton
+    local CloseUiButton -- not strictly needed, kept for symmetry
 
     local function dbg(...)
         print('[Gears]', ...)
@@ -819,7 +827,6 @@ end
             or name:find('tool') ~= nil
     end
 
-    -- resolve a "A.B.C" instance path (from game) into an Instance
     local function resolve_path(path: string)
         if (type(path) ~= 'string' or path == '') then return nil end
 
@@ -851,7 +858,6 @@ end
         return nil
     end
 
-    -- read multiplier labels out of one inventory gear entry
     local function scan_gear_entry(entry)
         local info = {name = entry.Name, muscle = 0, cash = 0, instance = nil}
 
@@ -877,10 +883,6 @@ end
         return info
     end
 
-    -- ----------------------------------------------------------------
-    --  Gear enumeration: Backpack -> Character -> PlayerGui, with
-    --  debug prints for every location so failures are visible.
-    -- ----------------------------------------------------------------
     local function collect_gears()
         local gears = {}
         local by_name = {}
@@ -901,70 +903,81 @@ end
             table.insert(gears, info)
         end
 
-        -- 1) Backpack tools
         local backpack = client:FindFirstChildWhichIsA('Backpack')
         dbg('Backpack:', backpack and ('found, ' .. #backpack:GetChildren() .. ' children') or 'NOT FOUND')
         if backpack then
             for _, item in ipairs(backpack:GetChildren()) do
-                dbg('  Backpack item:', item.Name, '(' .. item.ClassName .. ')')
-                if (item:IsA('Tool') and is_gearish(item.Name)) then
-                    add_gear(item.Name, item)
+                if (item:IsA('Tool')) then
+                    dbg('  Backpack item:', item.Name, '(' .. item.ClassName .. ')')
+                    if is_gearish(item.Name) then
+                        add_gear(item.Name, item)
+                    end
                 end
             end
         end
 
-        -- 2) Character (currently worn/held gears)
         local char = client.Character
         dbg('Character:', char and 'found' or 'NOT FOUND')
         if char then
             for _, item in ipairs(char:GetChildren()) do
-                if (item:IsA('Tool') and is_gearish(item.Name)) then
+                if (item:IsA('Tool')) then
                     dbg('  Character tool:', item.Name)
-                    add_gear(item.Name, item)
+                    if is_gearish(item.Name) then
+                        add_gear(item.Name, item)
+                    end
                 end
             end
         end
 
-        -- 3) PlayerGui inventory labels (multiplier info lives here)
-        local frames = playergui:FindFirstChild('Frames')
-        dbg('PlayerGui.Frames:', frames and 'found' or 'NOT FOUND')
-        if frames then
-            local inventory = frames:FindFirstChild('PlayerInventory', true)
-            dbg('PlayerInventory:', inventory and 'found' or 'NOT FOUND')
-            if inventory then
-                local gear_section = inventory:FindFirstChild('Gears', true)
-                    or inventory:FindFirstChild('Gear', true)
-                dbg('Gears section:', gear_section and ('found (' .. gear_section.Name .. ')') or 'NOT FOUND')
+        -- the inventory UI sometimes opens under a different parent than
+        -- `playergui.Frames` (e.g. `playergui.Main.Inventory`), so we walk
+        -- every notable descendant and look for a section whose name
+        -- matches any of the gear-related keywords.
+        local gear_section
 
-                if gear_section then
-                    for _, entry in ipairs(gear_section:GetDescendants()) do
-                        if (entry:IsA('Frame') or entry:IsA('ImageButton') or entry:IsA('TextButton')) then
-                            local info = scan_gear_entry(entry)
-                            if (info.muscle > 0 or info.cash > 0) then
-                                dbg('  Inventory gear:', info.name,
-                                    'muscle x' .. info.muscle, 'cash x' .. info.cash)
-                                add_gear(info.name, nil)
+        local function try_descend(root)
+            if (not root or gear_section) then return end
 
-                                local existing = by_name[info.name]
-                                existing.muscle = info.muscle
-                                existing.cash = info.cash
-                            end
-                        end
+            for _, candidate in ipairs(root:GetDescendants()) do
+                if (candidate:IsA('Frame') or candidate:IsA('ScrollingFrame')) then
+                    local n = string.lower(candidate.Name or '')
+                    if (n == 'gears' or n == 'gear' or n == 'gearsinventory' or n == 'geartab') then
+                        gear_section = candidate
+                        return
+                    end
+                end
+            end
+        end
+
+        try_descend(playergui)
+        try_descend(gethui and gethui())
+
+        dbg('Gears section:', gear_section and ('found (' .. gear_section:GetFullName() .. ')') or 'NOT FOUND')
+
+        if gear_section then
+            for _, entry in ipairs(gear_section:GetDescendants()) do
+                if (entry:IsA('Frame') or entry:IsA('ImageButton') or entry:IsA('TextButton')) then
+                    local info = scan_gear_entry(entry)
+                    if (info.muscle > 0 or info.cash > 0) then
+                        dbg('  Inventory gear:', info.name,
+                            'muscle x' .. info.muscle, 'cash x' .. info.cash)
+                        add_gear(info.name, nil)
+
+                        local existing = by_name[info.name]
+                        existing.muscle = info.muscle
+                        existing.cash = info.cash
                     end
                 end
             end
         end
 
         if (#gears == 0) then
-            dbg('NO gears found in Backpack, Character or PlayerGui - open your inventory once so it loads, then try again.')
+            dbg('NO gears found - open your inventory once so the gear section loads, then try again.')
         end
 
         return gears
     end
 
-    -- ----------------------------------------------------------------
-    --  Remote discovery
-    -- ----------------------------------------------------------------
     local function call_remote(remote, ...)
         if (not remote) then return false end
 
@@ -983,7 +996,6 @@ end
         return ok
     end
 
-    -- try several argument shapes, since the server signature is unknown
     function script_handler:invoke_gear_remote(remote, gear_name: string)
         if (call_remote(remote, gear_name)) then return true end
         if (call_remote(remote, gear_name, true)) then return true end
@@ -995,22 +1007,24 @@ end
     function script_handler:scan_gear_remotes(assign: boolean)
         local found = {}
 
-        local roots = {}
-        table.insert(roots, replicatedstorage)
-
-        local gear_service = self:get_knit_service('GearService')
-        dbg('GearService knit folder:', gear_service and gear_service:GetFullName() or 'NOT FOUND')
-        if gear_service then table.insert(roots, gear_service) end
-
-        for _, root in ipairs(roots) do
+        -- walk every plausible remote container; the game's GearService
+        -- lives inside `replicatedstorage.Packages._Index.<sleitnick_knit>
+        -- .knit.Services.GearService` per the existing get_knit_service
+        -- path, but remotes that clients interact with are also frequently
+        -- exposed directly under ReplicatedStorage.Shared.
+        local function scan(root)
+            if (not root) then return end
             for _, obj in ipairs(root:GetDescendants()) do
-                if (obj:IsA('RemoteEvent') or obj:IsA('RemoteFunction')) then
-                    if (is_gearish(obj.Name) or is_gearish(obj.Parent and obj.Parent.Name)) then
-                        table.insert(found, obj)
-                    end
+                if ((obj:IsA('RemoteEvent') or obj:IsA('RemoteFunction'))
+                    and (is_gearish(obj.Name) or is_gearish(obj.Parent and obj.Parent.Name))) then
+                    table.insert(found, obj)
                 end
             end
         end
+
+        scan(replicatedstorage)
+        scan(shared and shared._KnitServices) -- rare executor hook
+        scan(self:get_knit_service('GearService'))
 
         dbg(('scan finished: %d gear-ish remote(s) found'):format(#found))
         for _, obj in ipairs(found) do
@@ -1019,7 +1033,6 @@ end
 
         if (not assign) then return found end
 
-        -- auto-pick: equip remote, then unequip remote
         gear_state.equip_remote = nil
         gear_state.unequip_remote = nil
 
@@ -1028,7 +1041,8 @@ end
 
             if (not gear_state.equip_remote and name:find('equip') and not name:find('un')) then
                 gear_state.equip_remote = obj
-            elseif (not gear_state.unequip_remote and (name:find('unequip') or name:find('un_') or name:find('unequipped'))) then
+            elseif (not gear_state.unequip_remote
+                and (name:find('unequip') or name:find('un_equip') or name == 'remove' or name == 'unequipped')) then
                 gear_state.unequip_remote = obj
             end
         end
@@ -1040,16 +1054,15 @@ end
             UI.Banner({Text = 'Scan done (' .. #found .. ' remote(s)). Picked: '
                 .. (gear_state.equip_remote and gear_state.equip_remote.Name or 'no equip') .. ' / '
                 .. (gear_state.unequip_remote and gear_state.unequip_remote.Name or 'no unequip')
-                .. '. Check console output for the full list.'})
+                .. '. Check console output.'})
         else
-            UI.Banner({Text = 'Scan found ' .. #found .. ' remote(s) but could not auto-pick. Check console output and set the manual path.'})
+            UI.Banner({Text = 'Scan found ' .. #found .. ' remote(s) but could not auto-pick. Set the manual path. See console for full list.'})
         end
 
         return found
     end
 
     function script_handler:get_gear_remote(kind: string)
-        -- manual path always wins
         if gear_state.manual_path then
             local manual = resolve_path(gear_state.manual_path)
             if (manual and (manual:IsA('RemoteEvent') or manual:IsA('RemoteFunction'))) then
@@ -1058,10 +1071,7 @@ end
             dbg('manual path did not resolve to a remote:', gear_state.manual_path)
         end
 
-        if (kind == 'unequip') then
-            return gear_state.unequip_remote
-        end
-        return gear_state.equip_remote
+        return (kind == 'unequip') and gear_state.unequip_remote or gear_state.equip_remote
     end
 
     function script_handler:equip_best_gears(kind)
@@ -1084,14 +1094,14 @@ end
                 return (a[kind] or 0) > (b[kind] or 0)
             end)
         else
-            dbg('no multiplier labels readable - using inventory order')
+            dbg('no multiplier labels readable - using scan order')
         end
 
         dbg('best ' .. kind .. ' gear:', gears[1].name)
 
         local remote = self:get_gear_remote('equip')
         if (not remote) then
-            UI.Banner({Text = 'No equip remote yet - click "Scan Gear Remotes" (Gears tab) or set the manual path. Check console for the list.'})
+            UI.Banner({Text = 'No equip remote yet - click "Scan Gear Remotes" (Gears tab) or set the manual path. Check console output.'})
             return
         end
 
@@ -1111,14 +1121,12 @@ end
         local char = get_char(client)
         local humanoid = get_hum(char)
 
-        -- unequip everything currently held/worn (Tools)
         if humanoid then
             pcall(function() humanoid:UnequipTools() end)
         end
 
         local remote = self:get_gear_remote('unequip')
         if remote then
-            -- try bare call, then per-gear calls for anything still equipped
             call_remote(remote)
 
             local char2 = get_char(client)
@@ -1195,77 +1203,111 @@ end
         end
     end
 
-    -- Close UI: Material (this build) has no keybind element, so the
-    -- keybind lives on a Button next to "Close UI" (wired in the UI
-    -- block below) and the actual key handling happens here through
-    -- UserInputService. The ScreenGui is only hidden (Enabled = false),
-    -- never destroyed, so the same key reopens it.
+    -- ----------------------------------------------------------------
+    --  Close UI wiring (Shared state)
+    -- ----------------------------------------------------------------
     local close_ui_key = Enum.KeyCode.RightShift
+
+    -- the listener and the toggle both close over these locals, so the
+    -- UI block_b only has to update one of them.
     local waiting_for_bind = false
-    local KeybindButton -- set by the UI block below
 
-    -- Config is declared further down in the script, so the keybind
-    -- block reaches it through this bridge once the UI is built.
-    local keybind_bridge = {}
+    local function find_main_window()
+        -- search every common container because exploits stash ScreenGuis
+        -- differently (CoreGui, PlayerGui, gethui, get_hidden_gui).
+        local candidates = {}
 
-    local function get_ui_gui()
-        local name = '@cats - Gym League'
-        local containers = {}
+        if gethui then table.insert(candidates, gethui()) end
 
-        if gethui then table.insert(containers, gethui()) end
+        pcall(function()
+            service.CoreGui and table.insert(candidates, service.CoreGui)
+        end)
 
-        local ok, coregui = pcall(function() return service.CoreGui end)
-        if (ok and coregui) then table.insert(containers, coregui) end
+        table.insert(candidates, playergui)
 
-        table.insert(containers, playergui)
-
-        for _, container in ipairs(containers) do
-            local gui = container and container:FindFirstChild(name)
-            if (gui and gui:IsA('ScreenGui')) then return gui end
+        for _, container in ipairs(candidates) do
+            if container then
+                for _, child in ipairs(container:GetChildren()) do
+                    if (child:IsA('ScreenGui') and child.Name:find('cats - Gym League')) then
+                        return child
+                    end
+                end
+            end
         end
 
         return getgenv().OldInstance
     end
 
     local function toggle_ui()
-        local gui = get_ui_gui()
-        if not gui then return end
+        local gui = find_main_window()
+        if (not gui) then
+            warn('[CloseUI] ScreenGui not found in any container.')
+            return
+        end
 
+        -- flip BOTH ScreenGui.Enabled and the MainFrame.Visible so the
+        -- hide works on every exploit regardless of where the GUI is
+        -- parented. We never Destroy() the GUI - the same key will
+        -- reopen it.
+        local next_state = not (gui.Enabled ~= false)
         gui.Enabled = not gui.Enabled
+
+        local main = gui:FindFirstChild('MainFrame')
+        if main then
+            main.Visible = gui.Enabled
+        end
+    end
+
+    local function refresh_keybind_button()
+        local label = 'Close UI: ' .. close_ui_key.Name
+        if (KeybindButton and type(KeybindButton.SetText) == 'function') then
+            pcall(function() KeybindButton:SetText(label) end)
+        end
+        if (CloseUiButton and type(CloseUiButton.SetText) == 'function') then
+            pcall(function() CloseUiButton:SetText(label) end)
+        end
     end
 
     local function set_close_ui_key(key)
         close_ui_key = key
         waiting_for_bind = false
-
-        if (KeybindButton and type(KeybindButton.SetText) == 'function') then
-            pcall(function() KeybindButton:SetText('Keybind: ' .. key.Name) end)
-        end
+        refresh_keybind_button()
 
         if (type(keybind_bridge.save) == 'function') then
             pcall(keybind_bridge.save, key.Name)
         end
     end
 
-    service.UserInputService.InputBegan:Connect(function(input, processed)
-        -- while (re)binding: capture the next keyboard key and never
-        -- toggle the UI with that same keypress. Escape cancels.
+    -- Config bridge: declared here so the listener and the UI block can
+    -- reach Config.save even though Config itself is defined further
+    -- down in the script.
+    local keybind_bridge = {}
+
+    service.UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        -- while rebinding: capture ONLY keyboard input. Ignore mouse,
+        -- ignore Escape, ignore anything that came in while a TextBox
+        -- was focused (otherwise typing in the manual remote path box
+        -- would steal the keypress).
         if waiting_for_bind then
             if (input.UserInputType == Enum.UserInputType.Keyboard) then
-                if (input.KeyCode ~= Enum.KeyCode.Escape) then
-                    set_close_ui_key(input.KeyCode)
-                else
+                if (input.KeyCode == Enum.KeyCode.Escape) then
                     waiting_for_bind = false
+                    refresh_keybind_button()
+                    return
+                end
 
-                    if (KeybindButton and type(KeybindButton.SetText) == 'function') then
-                        pcall(function() KeybindButton:SetText('Keybind: ' .. close_ui_key.Name) end)
-                    end
+                if (service.UserInputService:GetFocusedTextBox() == nil) then
+                    set_close_ui_key(input.KeyCode)
                 end
             end
             return
         end
 
-        if processed then return end
+        -- normal mode: don't fire when typing in a textbox or when
+        -- Roblox has consumed the input
+        if gameProcessed then return end
+        if (service.UserInputService:GetFocusedTextBox()) then return end
+        if (input.UserInputType ~= Enum.UserInputType.Keyboard) then return end
 
         if (input.KeyCode == close_ui_key) then
             toggle_ui()
@@ -1631,7 +1673,6 @@ local progression_tab = UI.New({Title = 'Progression'}); do
         handler.auto_trainmods = self
     end, Menu = { Information = function(self) UI.Banner({Text = "Buys training modifier upgrades when affordable." }) end}})
 end
-
 local gears_tab = UI.New({Title = 'Gears'}); do
     gears_tab.Label({Text = 'Gears'})
 
@@ -1666,25 +1707,36 @@ local other_tab = UI.New({Title = 'Other'}); do
         handler:server_hop()
     end, Menu = { Information = function(self) UI.Banner({Text = "Moves you to a different public server." }) end}})
 
-    other_tab.Button({Text = 'Close UI', Callback = function()
+    other_tab.Label({Text = 'Close UI'})
+
+    -- The "box" beside Close UI: a Button whose TEXT is the current
+    -- keybind. Clicking it starts the rebind capture; whatever key the
+    -- user presses next becomes the new toggle key, and the button
+    -- text updates immediately.
+    KeybindButton = other_tab.Button({
+        Text = 'Close UI: ' .. close_ui_key.Name,
+        Callback = function()
+            waiting_for_bind = true
+            local ok = pcall(function() KeybindButton:SetText('Close UI: ... (press a key)') end)
+            if (not ok) then
+                warn('[CloseUI] Button ref missing - try again after the tab is visible.')
+            end
+            UI.Banner({Text = 'Press any key to set the Close UI keybind. Escape cancels.'})
+        end,
+        Menu = { Information = function(self) UI.Banner({Text = "Shows the current Close UI keybind. Click it, then press a key to rebind." }) end}
+    })
+
+    other_tab.Button({Text = 'Toggle UI (Manually Close / Open)', Callback = function()
         toggle_ui()
-    end, Menu = { Information = function(self) UI.Banner({Text = "Hides the UI. Press your keybind to reopen it." }) end}})
-
-    -- keybind button shown NEXT TO Close UI, pre-bound to RightShift;
-    -- clicking it waits for the next key press and rebinds to that key
-    KeybindButton = other_tab.Button({Text = 'Keybind: ' .. close_ui_key.Name, Callback = function()
-        waiting_for_bind = true
-        KeybindButton:SetText('Keybind: ... (press a key)')
-        UI.Banner({Text = 'Press any keyboard key now to set the Close UI keybind. Escape cancels.'})
-    end, Menu = { Information = function(self) UI.Banner({Text = "Shows the current Close UI keybind. Click it, then press a key to rebind." }) end}})
+    end, Menu = { Information = function(self) UI.Banner({Text = "Same as pressing your keybind." }) end}})
 end
-
--- wire the keybind save bridge to the config system (declared later in
--- the script) and restore a previously saved keybind
+-- wire the keybind save bridge to the config system (Config is declared
+-- further down in the script, so the bridge was empty until now)
 keybind_bridge.save = function(name)
     Config.save('close_ui_key', name)
 end
 
+-- restore a previously saved keybind
 do
     local saved_key = Config.data['close_ui_key']
     if (type(saved_key) == 'string') then
