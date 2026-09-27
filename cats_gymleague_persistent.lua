@@ -26,7 +26,7 @@ local ArmWrestleInfo = require(ReplicatedStorage.Shared.minigames.ArmWrestle.Inf
 local ActiveWorlds = GymsList.Config.GetActiveWorlds and GymsList.Config.GetActiveWorlds()
 
 local Material = loadstring(game:HttpGet("https://gist.githubusercontent.com/afyzone/8874e6a5f489d7e548db2ed8f5b87004/raw/"))()
-local UI = Material.Load({Title = "@cats - Gym League",Style = 1,SizeX = 500,SizeY = 400, ColorOverrides = { MainFrame = Color3.fromRGB(15,15,15), Minimise = Color3.fromRGB(68, 208, 255), MinimiseAccent = Color3.fromRGB(3, 188, 182), Maximise = Color3.fromRGB(25,255,0), MaximiseAccent = Color3.fromRGB(0,255,110), NavBar = Color3.fromRGB(15,15,15), NavBarAccent = Color3.fromRGB(255,255,255), NavBarInvert = Color3.fromRGB(15,15,15), TitleBar = Color3.fromRGB(30, 30, 30), TitleBarAccent = Color3.fromRGB(255,255,255), Overlay = Color3.fromRGB(30, 30, 30), Banner = Color3.fromRGB(30, 30, 30), BannerAccent = Color3.fromRGB(255,255,255), Content = Color3.fromRGB(85,85,85), Button = Color3.fromRGB(40, 40, 40), ButtonAccent = Color3.fromRGB(235, 235, 235), ChipSet = Color3.fromRGB(170, 170, 170), ChipSetAccent = Color3.fromRGB(100,100,100), DataTable = Color3.fromRGB(160,160,160), DataTableAccent = Color3.fromRGB(45,45,45), Slider = Color3.fromRGB(45,45,45), SliderAccent = Color3.fromRGB(235,235,235), Toggle = Color3.fromRGB(230, 230, 230), ToggleAccent = Color3.fromRGB(235, 235, 235), Dropdown = Color3.fromRGB(45, 45, 45), DropdownAccent = Color3.fromRGB(235,235,235), ColorPicker = Color3.fromRGB(10, 10, 10), ColorPickerAccent = Color3.fromRGB(235,235,235), TextField = Color3.fromRGB(55,55,55), TextFieldAccent = Color3.fromRGB(235,235,235), }})
+local UI = Material.Load({Title = "@_mellygunz on ig - Gym League",Style = 1,SizeX = 500,SizeY = 400, ColorOverrides = { MainFrame = Color3.fromRGB(15,15,15), Minimise = Color3.fromRGB(68, 208, 255), MinimiseAccent = Color3.fromRGB(3, 188, 182), Maximise = Color3.fromRGB(25,255,0), MaximiseAccent = Color3.fromRGB(0,255,110), NavBar = Color3.fromRGB(15,15,15), NavBarAccent = Color3.fromRGB(255,255,255), NavBarInvert = Color3.fromRGB(15,15,15), TitleBar = Color3.fromRGB(30, 30, 30), TitleBarAccent = Color3.fromRGB(255,255,255), Overlay = Color3.fromRGB(30, 30, 30), Banner = Color3.fromRGB(30, 30, 30), BannerAccent = Color3.fromRGB(255,255,255), Content = Color3.fromRGB(85,85,85), Button = Color3.fromRGB(40, 40, 40), ButtonAccent = Color3.fromRGB(235, 235, 235), ChipSet = Color3.fromRGB(170, 170, 170), ChipSetAccent = Color3.fromRGB(100,100,100), DataTable = Color3.fromRGB(160,160,160), DataTableAccent = Color3.fromRGB(45,45,45), Slider = Color3.fromRGB(45,45,45), SliderAccent = Color3.fromRGB(235,235,235), Toggle = Color3.fromRGB(230, 230, 230), ToggleAccent = Color3.fromRGB(235, 235, 235), Dropdown = Color3.fromRGB(45, 45, 45), DropdownAccent = Color3.fromRGB(235,235,235), ColorPicker = Color3.fromRGB(10, 10, 10), ColorPickerAccent = Color3.fromRGB(235,235,235), TextField = Color3.fromRGB(55,55,55), TextFieldAccent = Color3.fromRGB(235,235,235), }})
 
 local client = players.LocalPlayer
 local playergui = client:WaitForChild('PlayerGui')
@@ -46,20 +46,7 @@ local powerups, fast_mode = {}, {
     ['Calves'] = true,
 }
 
--- local equipment_rewards = {
---     ['Stamina'] = 'treadmill',
---     ['Chest'] = 'benchpress',
---     ['Triceps'] = workspace.Equipments:FindFirstChild('triceppushdown') and 'triceppushdown' or 'tricepscurl',
---     ['Shoulder'] = 'pushpress',
---     ['Abs'] = 'crunch',
---     ['Forearm'] = 'wristcurl',
---     ['Legs'] = 'legpress',
---     ['Back'] = 'deadlift',
---     ['Biceps'] = 'hammercurl',
---     ['Calves'] = 'frontsquat',
--- }
-
-local Equipments = {} -- {['hammercurl'] = {['Biceps'] = 0.7, ['Forearm'] = 0.3}, ...}
+local Equipments = {}
 local EquipmentNaming = {}
 for Index, EquipmentInfo in EquipmentsModule do
 	if type(EquipmentInfo) == 'table' and (EquipmentInfo.type == 'machine' or EquipmentInfo.type == 'weight' or EquipmentInfo.type == 'treadmill') then
@@ -183,14 +170,6 @@ local script_handler = {}; do
 
         self._knitBase = nil
 
-        -- self.ui_funcs = {}; do
-        --     for i,v in (equipment_rewards) do
-        --         self.ui_funcs[i] = function(self)
-        --             self.SetText(v)
-        --         end
-        --     end
-        -- end
-
         return self
     end 
 
@@ -260,7 +239,6 @@ local script_handler = {}; do
 
         if not (humanoid and root) then return end
 
-        -- humanoid:MoveTo(pos)
         if (vector.magnitude(pos - root.Position) > 0.2) then
             humanoid.WalkToPoint = pos
         end
@@ -311,10 +289,6 @@ local script_handler = {}; do
                     if (not self.current_path) then return end
                 end
             end)
-    
-            -- if (not success) then
-            --     self:move(pos)
-            -- end
         end
         self.current_path = nil
     end
@@ -478,13 +452,6 @@ local script_handler = {}; do
                     if (self.farmmode) then 
                         self:call('EquipmentService', 'RF', 'AutoLoad')
 
-                        -- if (not self.enable_fast_mode) then
-                        --     task.spawn(function()
-                        --         task.wait(0.1)
-                        --         self:call('EquipmentService', 'RE', 'autoTrain', false)
-                        --     end)
-                        -- end
-
                         if (self.auto_click) then
                             self:call('EquipmentService', 'RE', 'click')
                         end
@@ -583,8 +550,6 @@ local script_handler = {}; do
         local rewards = podium.RewardsFrame
 
         if (podium.Enabled) then
-            -- replicatedstorage:WaitForChild("Shared"):WaitForChild("minigames"):WaitForChild("Competition"):WaitForChild("comm"):FireServer()
-
             for i,v in (getconnections(rewards.CanvasGroup.Continue.MouseButton1Up)) do
                 v:Function()
             end
@@ -605,7 +570,6 @@ local script_handler = {}; do
 
                 if (os.clock() - (self.debounces['competition'] or 0) > 3) then
                     self.current_farming_instance = nil
-                    -- self:can_collide(true)
                     self:call('EquipmentService', 'RF', 'Leave')
                     self:call('MiniPodiumService', 'RF', 'Teleport')
 
@@ -626,20 +590,8 @@ local script_handler = {}; do
         local boost = playergui.Frames.PlayerInventory.PowerUps.CanvasGroup.List:FindFirstChild(item)
 
         if (char and backpack) then
-            -- local character_item = char:FindFirstChild(item)
-            -- local backpack_item = backpack:FindFirstChild(item)
-
             if (boost) then
                 if (self.use_powerup) then
-                    -- if (backpack_item) then
-                    --     backpack_item.Parent = char
-                    -- end
-
-                    -- if (character_item) then
-                    --     character_item:Activate()
-                    --     character_item.Parent = backpack
-                    -- end
-                    
                     self:call('ToolService', 'RF', 'ActivateTool', { powerupName = item, player = client })
                 end
             else
@@ -817,7 +769,6 @@ local function save_settings()
 	end)
 end
 
--- Wrapper around the Material toggle so every toggle is registered + auto-saved/restored
 local toggle_registry = {}
 local function Toggle(tab, config)
 	local key = config.Text or ('Toggle' .. tostring(#toggle_registry + 1))
@@ -962,12 +913,12 @@ pcall(function()
 end)
 if (not ui_screen_gui) then
 	pcall(function()
-		ui_screen_gui = game:GetService('CoreGui'):FindFirstChild('@cats - Gym League') or nil
+		ui_screen_gui = game:GetService('CoreGui'):FindFirstChild('@_mellygunz on ig - Gym League') or nil
 	end)
 end
 if (not ui_screen_gui) then
 	pcall(function()
-		if gethui then ui_screen_gui = gethui():FindFirstChild('@cats - Gym League') or nil end
+		if gethui then ui_screen_gui = gethui():FindFirstChild('@_mellygunz on ig - Gym League') or nil end
 	end)
 end
 
@@ -991,7 +942,7 @@ user_input_service.InputBegan:Connect(function(input, processed)
 		keybind_name = key
 		SavedSettings.keybind = key
 		save_settings()
-		if keybind_button then keybind_button:SetText('Keybind: ' .. key) end
+		if keybind_button then keybind_button:SetText('Close UI: ' .. key) end
 		return
 	end
 
@@ -1017,24 +968,11 @@ local main_tab = UI.New({Title = 'Main'}); do
         handler.manual = self
     end, Menu = { Information = function(self) UI.Banner({Text = "Turning on manual mode wont auto complete your stats." }) end}})
 
-    -- main_tab.TextField({
-    --     Text = "Manual Farms",
-    --     Editable = false,
-    --     Callback = function(Value)
-    --         handler.manual_farm = Value
-    --     end,
-    --     Menu = handler.ui_funcs
-    -- })
-
     main_tab.Dropdown({Text = 'Choose manual farm', Options = EquipmentNaming, Callback = function(Value)
         handler.manual_farm = Value
         SavedSettings.manual_farm = Value
         save_settings()
     end})
-    
-    -- main_tab.Toggle({Text = 'Fast Mode (Blatant)', Enabled = false, Callback = function(self)
-    --     handler.enable_fast_mode = self
-    -- end, Menu = { Information = function(self) UI.Banner({Text = "Sometimes faster stat gain." }) end}})
 
     main_tab.Label({Text = 'Progression'})
     Toggle(main_tab, {Text = 'Auto Quest', Callback = function(self)
@@ -1174,9 +1112,6 @@ local progression_tab = UI.New({Title = 'Progression'}); do
     end})
 
     progression_tab.Label({Text = 'Minigames & Modifiers'})
-    -- progression_tab.Toggle({Text = 'Auto Join Squid Game', Callback = function(self)
-    --     handler.auto_squidgame = self
-    -- end, Menu = { Information = function(self) UI.Banner({Text = "Teleports to squid game minigames when available." }) end}})
     Toggle(progression_tab, {Text = 'Auto Upgrade Training Mods', Callback = function(self)
         handler.auto_trainmods = self
     end, Menu = { Information = function(self) UI.Banner({Text = "Buys training modifier upgrades when affordable." }) end}})
@@ -1199,18 +1134,36 @@ local other_tab = UI.New({Title = 'Other'}); do
 
 	other_tab.Label({Text = 'UI'})
 
-	other_tab.Button({Text = 'Close UI', Callback = function()
-		if (ui_screen_gui) then
-			ui_screen_gui.Enabled = false
-		end
-	end, Menu = { Information = function(self) UI.Banner({Text = "Hides the UI. Use your keybind to reopen it." }) end}})
-
-	keybind_button = other_tab.Button({Text = 'Keybind: ' .. keybind_name, Callback = function()
+	keybind_button = other_tab.Button({Text = 'Close UI: ' .. keybind_name, Callback = function()
 		if (not waiting_for_keybind) then
 			waiting_for_keybind = true
-			keybind_button:SetText('Press any key...')
+			keybind_button:SetText('Close UI: ...')
 		end
 	end, Menu = { Information = function(self) UI.Banner({Text = "Click, then press the key you want to toggle the UI open/closed." }) end}})
+
+	other_tab.Button({Text = 'Unload UI', Callback = function()
+		if shared.afy then
+			shared.afy:Disconnect()
+			shared.afy = nil
+		end
+		if ui_screen_gui then
+			ui_screen_gui:Destroy()
+			ui_screen_gui = nil
+		end
+		if can_save then
+			pcall(function()
+				if isfile(settings_file) then
+					if type(delfile) == 'function' then
+						delfile(settings_file)
+					else
+						writefile(settings_file, '{}')
+					end
+				end
+			end)
+		end
+		SavedSettings = { toggles = {}, keybind = 'RightShift' }
+		UI.Banner({Text = 'UI unloaded and settings cleared.'})
+	end, Menu = { Information = function(self) UI.Banner({Text = "Completely removes the UI and deletes all saved settings." }) end}})
 end
 
 if shared.afy then
