@@ -906,6 +906,53 @@ local function server_hop()
 	end)
 end
 
+local function join_lowest_server()
+	task.spawn(function()
+		local place_id = game.PlaceId
+		local current_job = game.JobId
+		local lowest_playing = math.huge
+		local target_id = nil
+		local cursor = ''
+
+		for _ = 1, 5 do
+			local url = ('https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100'):format(place_id)
+			if (cursor ~= '') then url = url .. '&cursor=' .. cursor end
+
+			local data = http_get_json(url)
+			if (not data or type(data.data) ~= 'table') then break end
+
+			for _, server in (data.data) do
+				if (type(server.id) == 'string'
+					and server.id ~= current_job
+					and (server.playing or 0) < (server.maxPlayers or 0)) then
+					local playing = server.playing or 0
+					if playing < lowest_playing then
+						lowest_playing = playing
+						target_id = server.id
+					end
+				end
+			end
+
+			cursor = data.nextPageCursor or ''
+			if (cursor == '') then break end
+		end
+
+		if (not target_id) then
+			UI.Banner({Text = 'No other servers found, rejoining instead.'})
+			rejoin_server()
+			return
+		end
+
+		UI.Banner({Text = ('Joining lowest server (%d players)...'):format(lowest_playing)})
+		local ok = pcall(function()
+			teleportservice:TeleportToPlaceInstance(place_id, target_id, client)
+		end)
+		if (not ok) then
+			pcall(function() teleportservice:Teleport(place_id, client) end)
+		end
+	end)
+end
+
 -- // UI toggle + keybind
 local keybind_name = SavedSettings.keybind or 'RightShift'
 local ui_screen_gui = nil
@@ -1141,6 +1188,10 @@ local other_tab = UI.New({Title = 'Other'}); do
 	other_tab.Button({Text = 'Server Hop', Callback = function()
 		server_hop()
 	end, Menu = { Information = function(self) UI.Banner({Text = "Joins a different public server." }) end}})
+
+	other_tab.Button({Text = 'Join Lowest Server', Callback = function()
+		join_lowest_server()
+	end, Menu = { Information = function(self) UI.Banner({Text = "Joins the public server with the least amount of players." }) end}})
 
 	other_tab.Button({Text = 'Rejoin', Callback = function()
 		rejoin_server()
