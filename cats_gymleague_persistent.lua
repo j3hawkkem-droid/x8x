@@ -484,43 +484,50 @@ local script_handler = {}; do
     end
 
     function script_handler:grab_farm()
-        local current_stats = {
-            ['Stamina'] = tonumber(playergui.Frames.Stats.Main.MuscleList.Stamina.Frame.APercentage.Text:match('%d+'))
-        }
+    local current_stats = {
+        ['Stamina'] = tonumber(playergui.Frames.Stats.Main.MuscleList.Stamina.Frame.APercentage.Text:match('%d+'))
+    }
 
-        for i,v in (playergui.Frames.Stats.Main.MuscleList.Stats:GetChildren()) do
-            if (not v:IsA('ImageButton')) then continue end
-            current_stats[v.Name] = tonumber(v.Frame.APercentage.Text:match('%d+'))
-        end
+    for i,v in (playergui.Frames.Stats.Main.MuscleList.Stats:GetChildren()) do
+        if (not v:IsA('ImageButton')) then continue end
+        current_stats[v.Name] = tonumber(v.Frame.APercentage.Text:match('%d+'))
+    end
 
-        local all_stats_maxed = true
-        local selected_farm = (function()
-            for i,v in (current_stats) do
-                if (v == 100) then continue end
-                all_stats_maxed = false
+    local all_stats_maxed = true
+    local selected_farm = nil
 
-                local EquipmentName = GetBestEquipmentName(i, self.ClientData.muscles, self.ClientData.currentWorld)
-                if not EquipmentName then continue end
+    for muscle, percent in pairs(current_stats) do
+        if percent ~= 100 then
+            all_stats_maxed = false
 
+            local EquipmentName = GetBestEquipmentName(muscle, self.ClientData.muscles, self.ClientData.currentWorld)
+            if EquipmentName then
                 local equipment = self:get_equipment(EquipmentName)
-                if (not equipment) then continue end
-
-                self.fast_mode = fast_mode[i]
-
-                return EquipmentName
+                if equipment then
+                    self.fast_mode = fast_mode[muscle]
+                    selected_farm = EquipmentName
+                    break
+                end
             end
-        end)()
+        end
+    end
 
-        if (all_stats_maxed and self.auto_alter) then
+    -- All stats maxed → keep trying alter / world, and grind treadmill for cash
+    if all_stats_maxed then
+        if self.auto_alter then
             self:call('CharacterService', 'RF', 'NextAlter')
         end
-    
-        if (self.manual and self.manual_farm) then
-            return self.manual_farm
-        end
 
-        return selected_farm or GetBestEquipmentName('Stamina', self.ClientData.muscles, self.ClientData.currentWorld)
+        self.fast_mode = fast_mode['Stamina']
+        return 'treadmill'
     end
+
+    if self.manual and self.manual_farm then
+        return self.manual_farm
+    end
+
+    return selected_farm or GetBestEquipmentName('Stamina', self.ClientData.muscles, self.ClientData.currentWorld) or 'treadmill'
+end
 
     function script_handler:can_do_armwrestle()
         local TotalPower = BigNum.fromString64(self.ClientData.calculatedTotalPower):native()
