@@ -1,10 +1,18 @@
 -- https://www.roblox.com/games/17450551531 | Co-op coded with @Leadmarker
 
+-- Some executors do not expose `cloneref`; fall back to GetService directly.
+local cloneref = cloneref or function(x) return x end
+
 local service = setmetatable({}, {
     __index = function(self, key)
-        local service = cloneref(game:GetService(key))
-        rawset(self, key, service)
-        
+        local ok, svc = pcall(function()
+            return cloneref(game:GetService(key))
+        end)
+        if (not ok) or (svc == nil) then
+            warn(('[cats] GetService(%q) failed; substituting empty table'):format(tostring(key)))
+            svc = setmetatable({}, { __index = function() return function() end end })
+        end
+        rawset(self, key, svc)
         return rawget(self, key)
     end
 })
@@ -25,7 +33,98 @@ local DataController = KnitModule.GetController("DataController")
 local ArmWrestleInfo = require(ReplicatedStorage.Shared.minigames.ArmWrestle.Info)
 local ActiveWorlds = GymsList.Config.GetActiveWorlds and GymsList.Config.GetActiveWorlds()
 
-local Material = loadstring(game:HttpGet("https://gist.githubusercontent.com/afyzone/8874e6a5f489d7e548db2ed8f5b87004/raw/"))()
+-- Material UI library loader with multiple fallbacks.
+--
+-- Errors like
+--   [string ""]:1: URL must use http:// or https://
+--   [string ""]:1: attempt to call a nil value
+-- happen when `game:HttpGet` is missing in the executor (so it returns nil)
+-- and loadstring is then handed a non-string / nil body.  We try every
+-- common HTTP function first, fall back to `load` if `loadstring` is nil,
+-- and finally substitute a no-op stub so the rest of the script can
+-- continue running without crashing when Material can't be fetched.
+local Material
+do
+    local MaterialUrl = "https://gist.githubusercontent.com/afyzone/8874e6a5f489d7e548db2ed8f5b87004/raw/"
+
+    local function try_fetch(url)
+        local candidates = {
+            function()
+                if (type(game) == "table") and (type(game.HttpGet) == "function") then
+                    return game:HttpGet(url)
+                end
+            end,
+            function()
+                if (type(syn) == "table") and (type(syn.request) == "function") then
+                    local r = syn.request({ Url = url, Method = "GET" })
+                    return r and (r.Body or r.body)
+                end
+            end,
+            function()
+                if (type(http) == "table") and (type(http.request) == "function") then
+                    local r = http.request({ Url = url, Method = "GET" })
+                    return r and (r.Body or r.body)
+                end
+            end,
+            function()
+                if (type(http_request) == "function") then
+                    local r = http_request({ Url = url, Method = "GET" })
+                    return r and (r.Body or r.body)
+                end
+            end,
+            function()
+                if (type(request) == "function") then
+                    local r = request({ Url = url, Method = "GET" })
+                    return r and (r.Body or r.body)
+                end
+            end,
+        }
+        for _, fn in ipairs(candidates) do
+            local ok, res = pcall(fn)
+            if ok and (type(res) == "string") and (#res > 100) then
+                return res
+            end
+        end
+        return nil
+    end
+
+    local function try_compile(src)
+        if (type(loadstring) == "function") then
+            local f = loadstring(src)
+            if (type(f) == "function") then return f end
+        end
+        if (type(load) == "function") then
+            local f, _ = load(src)
+            if (type(f) == "function") then return f end
+        end
+        return nil
+    end
+
+    local body = try_fetch(MaterialUrl)
+    if body then
+        local chunk = try_compile(body)
+        if chunk then
+            local ok, lib = pcall(chunk)
+            if ok and (type(lib) == "table") then
+                Material = lib
+            end
+        end
+    end
+
+    if (type(Material) ~= "table") or (type(Material.Load) ~= "function") then
+        warn("[cats] Material UI library failed to load - using a no-op stub so the script can keep running.")
+        local stub_element
+        stub_element = setmetatable({}, {
+            __index = function(_, _) return function() return stub_element end end,
+            __call = function() return stub_element end,
+        })
+        local stub = {}
+        stub.New = function() return stub_element end
+        stub.Load = function() return stub end
+        stub.Banner = function() end
+        Material = stub
+    end
+end
 local UI = Material.Load({Title = "@cats - Gym League",Style = 1,SizeX = 500,SizeY = 400, ColorOverrides = { MainFrame = Color3.fromRGB(15,15,15), Minimise = Color3.fromRGB(68, 208, 255), MinimiseAccent = Color3.fromRGB(3, 188, 182), Maximise = Color3.fromRGB(25,255,0), MaximiseAccent = Color3.fromRGB(0,255,110), NavBar = Color3.fromRGB(15,15,15), NavBarAccent = Color3.fromRGB(255,255,255), NavBarInvert = Color3.fromRGB(15,15,15), TitleBar = Color3.fromRGB(30, 30, 30), TitleBarAccent = Color3.fromRGB(255,255,255), Overlay = Color3.fromRGB(30, 30, 30), Banner = Color3.fromRGB(30, 30, 30), BannerAccent = Color3.fromRGB(255,255,255), Content = Color3.fromRGB(85,85,85), Button = Color3.fromRGB(40, 40, 40), ButtonAccent = Color3.fromRGB(235, 235, 235), ChipSet = Color3.fromRGB(170, 170, 170), ChipSetAccent = Color3.fromRGB(100,100,100), DataTable = Color3.fromRGB(160,160,160), DataTableAccent = Color3.fromRGB(45,45,45), Slider = Color3.fromRGB(45,45,45), SliderAccent = Color3.fromRGB(235,235,235), Toggle = Color3.fromRGB(230, 230, 230), ToggleAccent = Color3.fromRGB(235, 235, 235), Dropdown = Color3.fromRGB(45, 45, 45), DropdownAccent = Color3.fromRGB(235,235,235), ColorPicker = Color3.fromRGB(10, 10, 10), ColorPickerAccent = Color3.fromRGB(235,235,235), TextField = Color3.fromRGB(55,55,55), TextFieldAccent = Color3.fromRGB(235,235,235), }})
 
 local client = players.LocalPlayer
