@@ -1,18 +1,10 @@
 -- https://www.roblox.com/games/17450551531 | Co-op coded with @Leadmarker
 
--- Some executors do not expose `cloneref`; fall back to GetService directly.
-local cloneref = cloneref or function(x) return x end
-
 local service = setmetatable({}, {
     __index = function(self, key)
-        local ok, svc = pcall(function()
-            return cloneref(game:GetService(key))
-        end)
-        if (not ok) or (svc == nil) then
-            warn(('[cats] GetService(%q) failed; substituting empty table'):format(tostring(key)))
-            svc = setmetatable({}, { __index = function() return function() end end })
-        end
-        rawset(self, key, svc)
+        local service = cloneref(game:GetService(key))
+        rawset(self, key, service)
+        
         return rawget(self, key)
     end
 })
@@ -33,98 +25,7 @@ local DataController = KnitModule.GetController("DataController")
 local ArmWrestleInfo = require(ReplicatedStorage.Shared.minigames.ArmWrestle.Info)
 local ActiveWorlds = GymsList.Config.GetActiveWorlds and GymsList.Config.GetActiveWorlds()
 
--- Material UI library loader with multiple fallbacks.
---
--- Errors like
---   [string ""]:1: URL must use http:// or https://
---   [string ""]:1: attempt to call a nil value
--- happen when `game:HttpGet` is missing in the executor (so it returns nil)
--- and loadstring is then handed a non-string / nil body.  We try every
--- common HTTP function first, fall back to `load` if `loadstring` is nil,
--- and finally substitute a no-op stub so the rest of the script can
--- continue running without crashing when Material can't be fetched.
-local Material
-do
-    local MaterialUrl = "https://gist.githubusercontent.com/afyzone/8874e6a5f489d7e548db2ed8f5b87004/raw/"
-
-    local function try_fetch(url)
-        local candidates = {
-            function()
-                if (type(game) == "table") and (type(game.HttpGet) == "function") then
-                    return game:HttpGet(url)
-                end
-            end,
-            function()
-                if (type(syn) == "table") and (type(syn.request) == "function") then
-                    local r = syn.request({ Url = url, Method = "GET" })
-                    return r and (r.Body or r.body)
-                end
-            end,
-            function()
-                if (type(http) == "table") and (type(http.request) == "function") then
-                    local r = http.request({ Url = url, Method = "GET" })
-                    return r and (r.Body or r.body)
-                end
-            end,
-            function()
-                if (type(http_request) == "function") then
-                    local r = http_request({ Url = url, Method = "GET" })
-                    return r and (r.Body or r.body)
-                end
-            end,
-            function()
-                if (type(request) == "function") then
-                    local r = request({ Url = url, Method = "GET" })
-                    return r and (r.Body or r.body)
-                end
-            end,
-        }
-        for _, fn in ipairs(candidates) do
-            local ok, res = pcall(fn)
-            if ok and (type(res) == "string") and (#res > 100) then
-                return res
-            end
-        end
-        return nil
-    end
-
-    local function try_compile(src)
-        if (type(loadstring) == "function") then
-            local f = loadstring(src)
-            if (type(f) == "function") then return f end
-        end
-        if (type(load) == "function") then
-            local f, _ = load(src)
-            if (type(f) == "function") then return f end
-        end
-        return nil
-    end
-
-    local body = try_fetch(MaterialUrl)
-    if body then
-        local chunk = try_compile(body)
-        if chunk then
-            local ok, lib = pcall(chunk)
-            if ok and (type(lib) == "table") then
-                Material = lib
-            end
-        end
-    end
-
-    if (type(Material) ~= "table") or (type(Material.Load) ~= "function") then
-        warn("[cats] Material UI library failed to load - using a no-op stub so the script can keep running.")
-        local stub_element
-        stub_element = setmetatable({}, {
-            __index = function(_, _) return function() return stub_element end end,
-            __call = function() return stub_element end,
-        })
-        local stub = {}
-        stub.New = function() return stub_element end
-        stub.Load = function() return stub end
-        stub.Banner = function() end
-        Material = stub
-    end
-end
+local Material = loadstring(game:HttpGet("https://gist.githubusercontent.com/afyzone/8874e6a5f489d7e548db2ed8f5b87004/raw/"))()
 local UI = Material.Load({Title = "@cats - Gym League",Style = 1,SizeX = 500,SizeY = 400, ColorOverrides = { MainFrame = Color3.fromRGB(15,15,15), Minimise = Color3.fromRGB(68, 208, 255), MinimiseAccent = Color3.fromRGB(3, 188, 182), Maximise = Color3.fromRGB(25,255,0), MaximiseAccent = Color3.fromRGB(0,255,110), NavBar = Color3.fromRGB(15,15,15), NavBarAccent = Color3.fromRGB(255,255,255), NavBarInvert = Color3.fromRGB(15,15,15), TitleBar = Color3.fromRGB(30, 30, 30), TitleBarAccent = Color3.fromRGB(255,255,255), Overlay = Color3.fromRGB(30, 30, 30), Banner = Color3.fromRGB(30, 30, 30), BannerAccent = Color3.fromRGB(255,255,255), Content = Color3.fromRGB(85,85,85), Button = Color3.fromRGB(40, 40, 40), ButtonAccent = Color3.fromRGB(235, 235, 235), ChipSet = Color3.fromRGB(170, 170, 170), ChipSetAccent = Color3.fromRGB(100,100,100), DataTable = Color3.fromRGB(160,160,160), DataTableAccent = Color3.fromRGB(45,45,45), Slider = Color3.fromRGB(45,45,45), SliderAccent = Color3.fromRGB(235,235,235), Toggle = Color3.fromRGB(230, 230, 230), ToggleAccent = Color3.fromRGB(235, 235, 235), Dropdown = Color3.fromRGB(45, 45, 45), DropdownAccent = Color3.fromRGB(235,235,235), ColorPicker = Color3.fromRGB(10, 10, 10), ColorPickerAccent = Color3.fromRGB(235,235,235), TextField = Color3.fromRGB(55,55,55), TextFieldAccent = Color3.fromRGB(235,235,235), }})
 
 local client = players.LocalPlayer
@@ -886,740 +787,18 @@ local script_handler = {}; do
         self:call('TrainingModifiersService', 'RF', 'Upgrade')
     end
 end
--- ================================================================
-    --  GEARS & OTHER  (added features, v3)
-    --
-    --  The previous version had two bugs that broke the UI:
-    --    1) the KeybindButton was a `local` in one scope and a
-    --       global assignment in another (different variables in
-    --       Lua), so the rebind button text never updated;
-    --    2) the InputBegan listener fired while a Roblox TextBox was
-    --       focused, stealing keypresses intended for textboxes.
-    --  Both are fixed below. CloseUI toggle now flips BOTH
-    --  ScreenGui.Enabled AND MainFrame.Visible so it works regardless
-    --  of which container the exploit parked the GUI in.
-    -- ================================================================
-    local MAX_GEAR_SLOTS = 3
-
-    local gear_state = {
-        equip_remote = nil,
-        unequip_remote = nil,
-        manual_path = nil,
-    }
-
-    -- ----------------------------------------------------------------
-    --  shared UI handles (declared here so block_b below can write to
-    --  them and the InputBegan listener can read them without turning
-    --  them into Lua globals)
-    -- ----------------------------------------------------------------
-    local KeybindButton
-    local CloseUiButton -- not strictly needed, kept for symmetry
-
-    local function dbg(...)
-        print('[Gears]', ...)
-    end
-
-    local function is_gearish(name: string): boolean
-        name = string.lower(name or '')
-        return name:find('gear') ~= nil
-            or name:find('equip') ~= nil
-            or name:find('tool') ~= nil
-    end
-
-    local function resolve_path(path: string)
-        if (type(path) ~= 'string' or path == '') then return nil end
-
-        local ok, obj = pcall(function()
-            local current = game
-            for _, part in ipairs(string.split(path, '.')) do
-                if (part ~= 'game' and part ~= 'Game') then
-                    current = current:WaitForChild(part, 3)
-                end
-            end
-            return current
-        end)
-
-        if (ok and obj) then return obj end
-        return nil
-    end
-
-    local function parse_multiplier(text)
-        if (type(text) ~= 'string') then return nil end
-
-        text = text:lower()
-
-        local mult = text:match('x%s*(%d+%.?%d*)')
-        if (mult) then return tonumber(mult) end
-
-        local pct = text:match('+%s*(%d+%.?%d*)%s*%%')
-        if (pct) then return 1 + (tonumber(pct) / 100) end
-
-        return nil
-    end
-
-    local function scan_gear_entry(entry)
-        local info = {name = entry.Name, muscle = 0, cash = 0, instance = nil}
-
-        for _, label in ipairs(entry:GetDescendants()) do
-            if (label:IsA('TextLabel') or label:IsA('TextButton')) then
-                local text = label.Text or ''
-                local value = parse_multiplier(text)
-                if value then
-                    text = text:lower()
-
-                    if (text:find('cash') or text:find('money')) then
-                        info.cash = math.max(info.cash, value)
-                    elseif (text:find('muscle')) then
-                        info.muscle = math.max(info.muscle, value)
-                    else
-                        info.muscle = math.max(info.muscle, value)
-                        info.cash = math.max(info.cash, value)
-                    end
-                end
-            end
-        end
-
-        return info
-    end
-
-    local function collect_gears()
-        local gears = {}
-        local by_name = {}
-
-        local function add_gear(name: string, instance)
-            if (not name or name == '') then return end
-
-            local existing = by_name[name]
-            if existing then
-                if (instance and not existing.instance) then
-                    existing.instance = instance
-                end
-                return
-            end
-
-            local info = {name = name, muscle = 0, cash = 0, instance = instance}
-            by_name[name] = info
-            table.insert(gears, info)
-        end
-
-        local backpack = client:FindFirstChildWhichIsA('Backpack')
-        dbg('Backpack:', backpack and ('found, ' .. #backpack:GetChildren() .. ' children') or 'NOT FOUND')
-        if backpack then
-            for _, item in ipairs(backpack:GetChildren()) do
-                if (item:IsA('Tool')) then
-                    dbg('  Backpack item:', item.Name, '(' .. item.ClassName .. ')')
-                    if is_gearish(item.Name) then
-                        add_gear(item.Name, item)
-                    end
-                end
-            end
-        end
-
-        local char = client.Character
-        dbg('Character:', char and 'found' or 'NOT FOUND')
-        if char then
-            for _, item in ipairs(char:GetChildren()) do
-                if (item:IsA('Tool')) then
-                    dbg('  Character tool:', item.Name)
-                    if is_gearish(item.Name) then
-                        add_gear(item.Name, item)
-                    end
-                end
-            end
-        end
-
-        -- the inventory UI sometimes opens under a different parent than
-        -- `playergui.Frames` (e.g. `playergui.Main.Inventory`), so we walk
-        -- every notable descendant and look for a section whose name
-        -- matches any of the gear-related keywords.
-        local gear_section
-
-        local function try_descend(root)
-            if (not root or gear_section) then return end
-
-            for _, candidate in ipairs(root:GetDescendants()) do
-                if (candidate:IsA('Frame') or candidate:IsA('ScrollingFrame')) then
-                    local n = string.lower(candidate.Name or '')
-                    if (n == 'gears' or n == 'gear' or n == 'gearsinventory' or n == 'geartab') then
-                        gear_section = candidate
-                        return
-                    end
-                end
-            end
-        end
-
-        try_descend(playergui)
-        try_descend(gethui and gethui())
-
-        dbg('Gears section:', gear_section and ('found (' .. gear_section:GetFullName() .. ')') or 'NOT FOUND')
-
-        if gear_section then
-            for _, entry in ipairs(gear_section:GetDescendants()) do
-                if (entry:IsA('Frame') or entry:IsA('ImageButton') or entry:IsA('TextButton')) then
-                    local info = scan_gear_entry(entry)
-                    if (info.muscle > 0 or info.cash > 0) then
-                        dbg('  Inventory gear:', info.name,
-                            'muscle x' .. info.muscle, 'cash x' .. info.cash)
-                        add_gear(info.name, nil)
-
-                        local existing = by_name[info.name]
-                        existing.muscle = info.muscle
-                        existing.cash = info.cash
-                    end
-                end
-            end
-        end
-
-        if (#gears == 0) then
-            dbg('NO gears found - open your inventory once so the gear section loads, then try again.')
-        end
-
-        return gears
-    end
-
-    local function call_remote(remote, ...)
-        if (not remote) then return false end
-
-        local args = {...}
-
-        local ok = pcall(function()
-            if (remote:IsA('RemoteFunction')) then
-                remote:InvokeServer(unpack(args))
-            elseif (remote:IsA('RemoteEvent')) then
-                remote:FireServer(unpack(args))
-            else
-                error('not a remote')
-            end
-        end)
-
-        return ok
-    end
-
-    function script_handler:invoke_gear_remote(remote, gear_name: string)
-        if (call_remote(remote, gear_name)) then return true end
-        if (call_remote(remote, gear_name, true)) then return true end
-        if (call_remote(remote, {name = gear_name})) then return true end
-        if (call_remote(remote, {gearName = gear_name})) then return true end
-        return false
-    end
-
-    function script_handler:scan_gear_remotes(assign: boolean)
-        local found = {}
-
-        -- walk every plausible remote container; the game's GearService
-        -- lives inside `replicatedstorage.Packages._Index.<sleitnick_knit>
-        -- .knit.Services.GearService` per the existing get_knit_service
-        -- path, but remotes that clients interact with are also frequently
-        -- exposed directly under ReplicatedStorage.Shared.
-        local function scan(root)
-            if (not root) then return end
-            for _, obj in ipairs(root:GetDescendants()) do
-                if ((obj:IsA('RemoteEvent') or obj:IsA('RemoteFunction'))
-                    and (is_gearish(obj.Name) or is_gearish(obj.Parent and obj.Parent.Name))) then
-                    table.insert(found, obj)
-                end
-            end
-        end
-
-        scan(replicatedstorage)
-        scan(shared and shared._KnitServices) -- rare executor hook
-        scan(self:get_knit_service('GearService'))
-
-        dbg(('scan finished: %d gear-ish remote(s) found'):format(#found))
-        for _, obj in ipairs(found) do
-            dbg('  ' .. obj.ClassName .. ' -> ' .. obj:GetFullName())
-        end
-
-        if (not assign) then return found end
-
-        gear_state.equip_remote = nil
-        gear_state.unequip_remote = nil
-
-        for _, obj in ipairs(found) do
-            local name = string.lower(obj.Name)
-
-            if (not gear_state.equip_remote and name:find('equip') and not name:find('un')) then
-                gear_state.equip_remote = obj
-            elseif (not gear_state.unequip_remote
-                and (name:find('unequip') or name:find('un_equip') or name == 'remove' or name == 'unequipped')) then
-                gear_state.unequip_remote = obj
-            end
-        end
-
-        dbg('auto-picked equip remote:', gear_state.equip_remote and gear_state.equip_remote:GetFullName() or 'none')
-        dbg('auto-picked unequip remote:', gear_state.unequip_remote and gear_state.unequip_remote:GetFullName() or 'none')
-
-        if (gear_state.equip_remote or gear_state.unequip_remote) then
-            UI.Banner({Text = 'Scan done (' .. #found .. ' remote(s)). Picked: '
-                .. (gear_state.equip_remote and gear_state.equip_remote.Name or 'no equip') .. ' / '
-                .. (gear_state.unequip_remote and gear_state.unequip_remote.Name or 'no unequip')
-                .. '. Check console output.'})
-        else
-            UI.Banner({Text = 'Scan found ' .. #found .. ' remote(s) but could not auto-pick. Set the manual path. See console for full list.'})
-        end
-
-        return found
-    end
-
-    function script_handler:get_gear_remote(kind: string)
-        if gear_state.manual_path then
-            local manual = resolve_path(gear_state.manual_path)
-            if (manual and (manual:IsA('RemoteEvent') or manual:IsA('RemoteFunction'))) then
-                return manual
-            end
-            dbg('manual path did not resolve to a remote:', gear_state.manual_path)
-        end
-
-        return (kind == 'unequip') and gear_state.unequip_remote or gear_state.equip_remote
-    end
-
-    function script_handler:equip_best_gears(kind)
-        local gears = collect_gears()
-        if (#gears == 0) then
-            UI.Banner({Text = 'No gears found - open your inventory once, then try again. Check console [Gears] output.'})
-            return
-        end
-
-        local any_multiplier = false
-        for _, gear in ipairs(gears) do
-            if ((gear[kind] or 0) > 0) then
-                any_multiplier = true
-                break
-            end
-        end
-
-        if any_multiplier then
-            table.sort(gears, function(a, b)
-                return (a[kind] or 0) > (b[kind] or 0)
-            end)
-        else
-            dbg('no multiplier labels readable - using scan order')
-        end
-
-        dbg('best ' .. kind .. ' gear:', gears[1].name)
-
-        local remote = self:get_gear_remote('equip')
-        if (not remote) then
-            UI.Banner({Text = 'No equip remote yet - click "Scan Gear Remotes" (Gears tab) or set the manual path. Check console output.'})
-            return
-        end
-
-        local equipped = 0
-        for _, gear in ipairs(gears) do
-            if (equipped >= MAX_GEAR_SLOTS) then break end
-
-            if (self:invoke_gear_remote(remote, gear.name)) then
-                equipped += 1
-            end
-        end
-
-        UI.Banner({Text = ('Equipped %d of %d scanned gear(s) for %s.'):format(equipped, #gears, kind)})
-    end
-
-    function script_handler:unequip_gears()
-        local char = get_char(client)
-        local humanoid = get_hum(char)
-
-        if humanoid then
-            pcall(function() humanoid:UnequipTools() end)
-        end
-
-        local remote = self:get_gear_remote('unequip')
-        if remote then
-            call_remote(remote)
-
-            local char2 = get_char(client)
-            if char2 then
-                for _, item in ipairs(char2:GetChildren()) do
-                    if (item:IsA('Tool') and is_gearish(item.Name)) then
-                        call_remote(remote, item.Name)
-                    end
-                end
-            end
-        end
-
-        if (humanoid or remote) then
-            UI.Banner({Text = 'Unequip request sent.'})
-        else
-            UI.Banner({Text = 'Could not unequip - click "Scan Gear Remotes" (Gears tab) and check console output.'})
-        end
-    end
-
-    -- ----------------------------------------------------------------
-    --  OTHER: Server Hop + Close UI keybind
-    -- ----------------------------------------------------------------
-    local function get_http_fn()
-        local ok, fn
-
-        ok, fn = pcall(function() return syn and syn.request end)
-        if (ok and fn) then return fn end
-
-        ok, fn = pcall(function() return http and http.request end)
-        if (ok and fn) then return fn end
-
-        ok, fn = pcall(function() return http_request end)
-        if (ok and fn) then return fn end
-
-        ok, fn = pcall(function() return request end)
-        if (ok and fn) then return fn end
-
-        return nil
-    end
-
-    function script_handler:server_hop()
-        local place_id = game.PlaceId
-        local job_id = game.JobId
-        local teleport = service.TeleportService
-
-        local ok = pcall(function()
-            local http_fn = get_http_fn()
-            assert(http_fn, 'no http request function available in this executor')
-
-            local response = http_fn({
-                Url = ('https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100&excludeFullGames=true'):format(place_id),
-                Method = 'GET'
-            })
-
-            local decoded = service.HttpService:JSONDecode(response.Body)
-            local candidates = {}
-
-            for _, server in ipairs(decoded.data or {}) do
-                if (server.id ~= job_id and (server.playing or 0) < (server.maxPlayers or 0)) then
-                    table.insert(candidates, server.id)
-                end
-            end
-
-            if (#candidates == 0) then
-                teleport:Teleport(place_id, client)
-                return
-            end
-
-            teleport:TeleportToPlaceInstance(place_id, candidates[math.random(1, #candidates)], client)
-        end)
-
-        if (not ok) then
-            pcall(function() teleport:Teleport(place_id, client) end)
-        end
-    end
-
-    -- ----------------------------------------------------------------
-    --  Close UI wiring (Shared state)
-    -- ----------------------------------------------------------------
-    local close_ui_key = Enum.KeyCode.RightShift
-
-    -- the listener and the toggle both close over these locals, so the
-    -- UI block_b only has to update one of them.
-    local waiting_for_bind = false
-
-    local function find_main_window()
-        -- search every common container because exploits stash ScreenGuis
-        -- differently (CoreGui, PlayerGui, gethui, get_hidden_gui).
-        local candidates = {}
-
-        if gethui then table.insert(candidates, gethui()) end
-
-        pcall(function()
-            service.CoreGui and table.insert(candidates, service.CoreGui)
-        end)
-
-        table.insert(candidates, playergui)
-
-        for _, container in ipairs(candidates) do
-            if container then
-                for _, child in ipairs(container:GetChildren()) do
-                    if (child:IsA('ScreenGui') and child.Name:find('cats - Gym League')) then
-                        return child
-                    end
-                end
-            end
-        end
-
-        return getgenv().OldInstance
-    end
-
-    local function toggle_ui()
-        local gui = find_main_window()
-        if (not gui) then
-            warn('[CloseUI] ScreenGui not found in any container.')
-            return
-        end
-
-        -- flip BOTH ScreenGui.Enabled and the MainFrame.Visible so the
-        -- hide works on every exploit regardless of where the GUI is
-        -- parented. We never Destroy() the GUI - the same key will
-        -- reopen it.
-        local next_state = not (gui.Enabled ~= false)
-        gui.Enabled = not gui.Enabled
-
-        local main = gui:FindFirstChild('MainFrame')
-        if main then
-            main.Visible = gui.Enabled
-        end
-    end
-
-    local function refresh_keybind_button()
-        local label = 'Close UI: ' .. close_ui_key.Name
-        if (KeybindButton and type(KeybindButton.SetText) == 'function') then
-            pcall(function() KeybindButton:SetText(label) end)
-        end
-        if (CloseUiButton and type(CloseUiButton.SetText) == 'function') then
-            pcall(function() CloseUiButton:SetText(label) end)
-        end
-    end
-
-    local function set_close_ui_key(key)
-        close_ui_key = key
-        waiting_for_bind = false
-        refresh_keybind_button()
-
-        if (type(keybind_bridge.save) == 'function') then
-            pcall(keybind_bridge.save, key.Name)
-        end
-    end
-
-    -- Config bridge: declared here so the listener and the UI block can
-    -- reach Config.save even though Config itself is defined further
-    -- down in the script.
-    local keybind_bridge = {}
-
-    service.UserInputService.InputBegan:Connect(function(input, gameProcessed)
-        -- while rebinding: capture ONLY keyboard input. Ignore mouse,
-        -- ignore Escape, ignore anything that came in while a TextBox
-        -- was focused (otherwise typing in the manual remote path box
-        -- would steal the keypress).
-        if waiting_for_bind then
-            if (input.UserInputType == Enum.UserInputType.Keyboard) then
-                if (input.KeyCode == Enum.KeyCode.Escape) then
-                    waiting_for_bind = false
-                    refresh_keybind_button()
-                    return
-                end
-
-                if (service.UserInputService:GetFocusedTextBox() == nil) then
-                    set_close_ui_key(input.KeyCode)
-                end
-            end
-            return
-        end
-
-        -- normal mode: don't fire when typing in a textbox or when
-        -- Roblox has consumed the input
-        if gameProcessed then return end
-        if (service.UserInputService:GetFocusedTextBox()) then return end
-        if (input.UserInputType ~= Enum.UserInputType.Keyboard) then return end
-
-        if (input.KeyCode == close_ui_key) then
-            toggle_ui()
-        end
-    end)
-
 
 local handler = script_handler.new()
-
-
--- ================================================================
---  Persistent Settings  (auto save + auto load)
---  Material (this build) has no built-in config saving, so settings
---  are written to a JSON file in the executor's workspace folder and
---  re-applied automatically on the next execution.
--- ================================================================
-
-local HttpService = service.HttpService
-
-local CONFIG_FOLDER = 'cats_gymleague'
-local CONFIG_FILE = CONFIG_FOLDER .. '/settings.json'
-
-local Config = {
-	data = {},
-	saved = {},
-	building = true,
-	registry = {},
-	restoring = {},
-	ui_fired = {},
-	enabled = false,
-}
-
-do
-	local ok = pcall(function()
-		assert(type(isfolder) == 'function')
-		assert(type(makefolder) == 'function')
-		assert(type(isfile) == 'function')
-		assert(type(readfile) == 'function')
-		assert(type(writefile) == 'function')
-
-		if (not isfolder(CONFIG_FOLDER)) then
-			makefolder(CONFIG_FOLDER)
-		end
-	end)
-
-	Config.enabled = ok
-end
-
-if (Config.enabled and isfile(CONFIG_FILE)) then
-	pcall(function()
-		local decoded = HttpService:JSONDecode(readfile(CONFIG_FILE))
-
-		if (type(decoded) == 'table') then
-			Config.data = decoded
-
-			-- untouched snapshot of the settings on disk: the UI elements are
-			-- built with default values (which fires their callbacks), and this
-			-- snapshot is what gets restored afterwards.
-			Config.saved = HttpService:JSONDecode(HttpService:JSONEncode(decoded)) or {}
-		end
-	end)
-end
-
-function Config.save(key: string, value)
-	Config.data[key] = value
-
-	if (not Config.enabled or Config.building) then return end
-
-	pcall(function()
-		writefile(CONFIG_FILE, HttpService:JSONEncode(Config.data))
-	end)
-end
-
-function Config.apply_ui(element, value)
-	if (type(element) ~= 'table') then return end
-
-	local function try_methods(object)
-		if (type(object) ~= 'table') then return false end
-
-		for _, method_name in ipairs({'Set', 'SetState', 'SetValue', 'set'}) do
-			local method = object[method_name]
-
-			if (type(method) == 'function' and pcall(method, object, value)) then
-				return true
-			end
-		end
-
-		return false
-	end
-
-	if (try_methods(element)) then return end
-
-	for _, key in ipairs({'Core', 'Instance', 'Object', 'Component'}) do
-		if (try_methods(element[key])) then return end
-	end
-
-	for _, field in ipairs({'Enabled', 'Value', 'State', 'Toggled'}) do
-		if (type(element[field]) == 'boolean') then
-			pcall(function() element[field] = value end)
-			return
-		end
-	end
-end
-
-function Config.register(key: string, element, callback, visual)
-	Config.registry[key] = {element = element, callback = callback, visual = visual}
-end
-
-function Config.track(original, key: string)
-	return function(state)
-		Config.save(key, state)
-
-		if (Config.restoring[key]) then
-			Config.ui_fired[key] = true
-		end
-
-		if (original) then
-			original(state)
-		end
-	end
-end
-
-function Config.PersistentToggle(parent, key: string, options)
-	local original = options.Callback
-	options.Callback = Config.track(original, key)
-
-	local element = parent.Toggle(options)
-	Config.register(key, element, original)
-
-	return element
-end
-
-function Config.PersistentDropdown(parent, key: string, options)
-	local original = options.Callback
-	options.Callback = Config.track(original, key)
-
-	local element = parent.Dropdown(options)
-
-	Config.register(key, element, original, function(value)
-		if (type(value) == 'string' and type(element.SetText) == 'function') then
-			pcall(function() element:SetText(value) end)
-		end
-	end)
-
-	return element
-end
-
-function Config.PersistentChipSet(parent, key: string, options)
-	local original = options.Callback
-	options.Callback = Config.track(original, key)
-
-	local element = parent.ChipSet(options)
-	Config.register(key, element, original)
-
-	return element
-end
-
-function Config.load()
-	Config.building = false
-
-	if (not Config.enabled) then
-		warn('[Config] This executor has no file functions - settings will not persist.')
-		return
-	end
-
-	local restored, failed = 0, 0
-
-	for key, entry in (Config.registry) do
-		local saved = Config.saved[key]
-		if (saved == nil) then continue end
-
-		-- Ask the UI to show the saved value. If the library fires the
-		-- element callback, ui_fired flips and we do not run it twice.
-		Config.ui_fired[key] = false
-		Config.restoring[key] = true
-
-		if (type(entry.visual) == 'function') then
-			pcall(entry.visual, saved)
-		end
-		Config.apply_ui(entry.element, saved)
-		Config.restoring[key] = false
-
-		-- The visual setter did not trigger the real callback (or does not
-		-- exist), so start the saved behaviour manually.
-		if (not Config.ui_fired[key] and type(entry.callback) == 'function') then
-			if (not pcall(entry.callback, saved)) then
-				failed = failed + 1
-			end
-		end
-
-		-- keep the in-memory copy consistent with what was just restored
-		Config.save(key, saved)
-
-		restored = restored + 1
-	end
-
-	print(('[Config] Loaded %d saved setting(s).%s'):format(restored, failed > 0 and (" " .. failed .. " failed to apply.") or ''))
-end
-
-local PersistentToggle = Config.PersistentToggle
-local PersistentDropdown = Config.PersistentDropdown
-local PersistentChipSet = Config.PersistentChipSet
-
 local main_tab = UI.New({Title = 'Main'}); do 
     main_tab.Label({Text = 'Farming'})
     
-    PersistentToggle(main_tab, 'autofarm', {Text = 'Autofarm', Enabled = false, Callback = function(self)
+    main_tab.Toggle({Text = 'Autofarm', Enabled = false, Callback = function(self)
         handler:toggle_autofarm(self)
     end, Menu = { Information = function(self) UI.Banner({Text = "Finds the best equipment to farm based on your stats." }) end}})
     handler.AutoFarmTextField = main_tab.TextField({Text = 'Status: '..handler.farmstatus, Type = 'NoSuggestions'})
 
     main_tab.Label({Text = 'Manual Farming'})
-    PersistentToggle(main_tab, 'manual_farm', {Text = 'Manual Farm', Enabled = false, Callback = function(self)
+    main_tab.Toggle({Text = 'Manual Farm', Enabled = false, Callback = function(self)
         handler.manual = self
     end, Menu = { Information = function(self) UI.Banner({Text = "Turning on manual mode wont auto complete your stats." }) end}})
 
@@ -1632,7 +811,7 @@ local main_tab = UI.New({Title = 'Main'}); do
     --     Menu = handler.ui_funcs
     -- })
 
-    PersistentDropdown(main_tab, 'manual_farm_choice', {Text = 'Choose manual farm', Options = EquipmentNaming, Callback = function(Value)
+    main_tab.Dropdown({Text = 'Choose manual farm', Options = EquipmentNaming, Callback = function(Value)
         handler.manual_farm = Value
     end})
     
@@ -1641,10 +820,10 @@ local main_tab = UI.New({Title = 'Main'}); do
     -- end, Menu = { Information = function(self) UI.Banner({Text = "Sometimes faster stat gain." }) end}})
 
     main_tab.Label({Text = 'Progression'})
-    PersistentToggle(main_tab, 'auto_quest', {Text = 'Auto Quest', Callback = function(self)
+    main_tab.Toggle({Text = 'Auto Quest', Callback = function(self)
         handler.autoquest = self
     end})
-    PersistentToggle(main_tab, 'auto_world', {Text = 'Auto World', Callback = function(self)
+    main_tab.Toggle({Text = 'Auto World', Callback = function(self)
         if self then
             local GetQuest = workspace:FindFirstChild('GetQuest', true)
 
@@ -1661,14 +840,14 @@ local main_tab = UI.New({Title = 'Main'}); do
         handler.autonextworld = self
     end})
 
-    PersistentToggle(main_tab, 'auto_body_alter', {Text = 'Auto Body Alter', Callback = function(self)
+    main_tab.Toggle({Text = 'Auto Body Alter', Callback = function(self)
         handler.auto_alter = self
     end})
-    PersistentToggle(main_tab, 'auto_trainer', {Text = 'Auto Trainer', Callback = function(self)
+    main_tab.Toggle({Text = 'Auto Trainer', Callback = function(self)
         handler.auto_trainer = self
     end})
     
-    PersistentToggle(main_tab, 'auto_clicker', {Text = 'Auto Clicker', Enabled = false, Callback = function(self)
+    main_tab.Toggle({Text = 'Auto Clicker', Enabled = false, Callback = function(self)
         handler.auto_click = self
     end, Menu = { Information = function(self) UI.Banner({Text = "Auto clicks for you when needed." }) end}})
 
@@ -1677,19 +856,19 @@ end
 local powerup_tab = UI.New({Title = 'PowerUps'}); do
     powerup_tab.Label({Text = 'Auto PowerUp'})
 
-    PersistentToggle(powerup_tab, 'auto_buy_power_up', {Text = 'Auto Buy Power-Up', Callback = function(self)
+    powerup_tab.Toggle({Text = 'Auto Buy Power-Up', Callback = function(self)
         handler.buy_powerup = self
     end})
 
-    PersistentToggle(powerup_tab, 'auto_use_power_up', {Text = 'Auto Use Power-Up', Callback = function(self)
+    powerup_tab.Toggle({Text = 'Auto Use Power-Up', Callback = function(self)
         handler.use_powerup = self
     end})
 
-    PersistentToggle(powerup_tab, 'choose_all_power_ups_except_milk', {Text = 'Choose All Power-Ups (Except Milk)', Callback = function(self)
+    powerup_tab.Toggle({Text = 'Choose All Power-Ups (Except Milk)', Callback = function(self)
         handler.use_all_powerups = self
     end})
 
-    PersistentChipSet(powerup_tab, 'choose_powerups', {
+    powerup_tab.ChipSet({
         Text = "Choose Power-Ups",
         Callback = function(selected_powerup)
             handler.selected_powerup = selected_powerup
@@ -1700,7 +879,7 @@ end
 
 local misc_tab = UI.New({Title = 'Misc'}); do
     misc_tab.Label({Text = 'Misc'})
-    PersistentToggle(misc_tab, 'auto_competition', {Text = 'Auto Competition', Callback = function(self)
+    misc_tab.Toggle({Text = 'Auto Competition', Callback = function(self)
         handler.autocomp = self 
 
         if (not handler.autocomp) then
@@ -1710,57 +889,57 @@ local misc_tab = UI.New({Title = 'Misc'}); do
     end})
 
     misc_tab.Label({Text = 'Aura'})
-    PersistentToggle(misc_tab, 'aura_roll', {Text = 'Aura Roll', Callback = function(self)
+    misc_tab.Toggle({Text = 'Aura Roll', Callback = function(self)
         handler.auraautoroll = self
     end})
 
-    PersistentToggle(misc_tab, 'buy_aura_roll', {Text = 'Buy Aura Roll', Callback = function(self)
+    misc_tab.Toggle({Text = 'Buy Aura Roll', Callback = function(self)
         handler.buyaurarolls = self
     end})
 
     misc_tab.Label({Text = 'Pose'})
-    PersistentToggle(misc_tab, 'pose_roll', {Text = 'Pose Roll', Callback = function(self)
+    misc_tab.Toggle({Text = 'Pose Roll', Callback = function(self)
         handler.auraposeroll = self
     end})
 
-    PersistentToggle(misc_tab, 'buy_pose_roll', {Text = 'Buy Pose Roll', Callback = function(self)
+    misc_tab.Toggle({Text = 'Buy Pose Roll', Callback = function(self)
         handler.buyposerolls = self
     end})
 
     misc_tab.Label({Text = 'Fortune & Roulette'})
-    PersistentToggle(misc_tab, 'auto_fortune_spin', {Text = 'Auto Fortune Spin', Callback = function(self)
+    misc_tab.Toggle({Text = 'Auto Fortune Spin', Callback = function(self)
         handler.auto_fortune = self
     end})
-    PersistentToggle(misc_tab, 'auto_roulette_spin', {Text = 'Auto Roulette Spin', Callback = function(self)
+    misc_tab.Toggle({Text = 'Auto Roulette Spin', Callback = function(self)
         handler.auto_roulette = self
     end})
 
     misc_tab.Label({Text = 'Gear'})
-    PersistentToggle(misc_tab, 'auto_gear_roll', {Text = 'Auto Gear Roll', Callback = function(self)
+    misc_tab.Toggle({Text = 'Auto Gear Roll', Callback = function(self)
         handler.auto_gear = self
     end})
 end
 
 local progression_tab = UI.New({Title = 'Progression'}); do
     progression_tab.Label({Text = 'Daily & Battlepass'})
-    PersistentToggle(progression_tab, 'auto_daily_gift', {Text = 'Auto Daily Gift', Callback = function(self)
+    progression_tab.Toggle({Text = 'Auto Daily Gift', Callback = function(self)
         handler.auto_dailygift = self
     end})
-    PersistentToggle(progression_tab, 'auto_battlepass_claim', {Text = 'Auto Battlepass Claim', Callback = function(self)
+    progression_tab.Toggle({Text = 'Auto Battlepass Claim', Callback = function(self)
         handler.auto_battlepass = self
     end})
-    PersistentToggle(progression_tab, 'claim_premium_too', {Text = 'Claim Premium Too', Callback = function(self)
+    progression_tab.Toggle({Text = 'Claim Premium Too', Callback = function(self)
         handler.auto_battlepass_premium = self
     end})
 
     progression_tab.Label({Text = 'World & Galaxy'})
-    PersistentToggle(progression_tab, 'auto_galaxy_level', {Text = 'Auto Galaxy Level', Callback = function(self)
+    progression_tab.Toggle({Text = 'Auto Galaxy Level', Callback = function(self)
         handler.auto_galaxy = self
     end, Menu = { Information = function(self) UI.Banner({Text = "Buys next galaxy level when you can afford it." }) end}})
-    PersistentToggle(progression_tab, 'auto_event_quests', {Text = 'Auto Event Quests', Callback = function(self)
+    progression_tab.Toggle({Text = 'Auto Event Quests', Callback = function(self)
         handler.auto_eventquest = self
     end})
-    PersistentToggle(progression_tab, 'auto_clan_rewards', {Text = 'Auto Clan Rewards', Callback = function(self)
+    progression_tab.Toggle({Text = 'Auto Clan Rewards', Callback = function(self)
         handler.autoclaim_clan = self
     end})
 
@@ -1768,86 +947,10 @@ local progression_tab = UI.New({Title = 'Progression'}); do
     -- progression_tab.Toggle({Text = 'Auto Join Squid Game', Callback = function(self)
     --     handler.auto_squidgame = self
     -- end, Menu = { Information = function(self) UI.Banner({Text = "Teleports to squid game minigames when available." }) end}})
-    PersistentToggle(progression_tab, 'auto_upgrade_training_mods', {Text = 'Auto Upgrade Training Mods', Callback = function(self)
+    progression_tab.Toggle({Text = 'Auto Upgrade Training Mods', Callback = function(self)
         handler.auto_trainmods = self
     end, Menu = { Information = function(self) UI.Banner({Text = "Buys training modifier upgrades when affordable." }) end}})
 end
-local gears_tab = UI.New({Title = 'Gears'}); do
-    gears_tab.Label({Text = 'Gears'})
-
-    gears_tab.Button({Text = 'Equip Best Gears (Muscle)', Callback = function()
-        handler:equip_best_gears('muscle')
-    end, Menu = { Information = function(self) UI.Banner({Text = "Equips your gears with the highest muscle multiplier." }) end}})
-
-    gears_tab.Button({Text = 'Equip Best Gears (Cash)', Callback = function()
-        handler:equip_best_gears('cash')
-    end, Menu = { Information = function(self) UI.Banner({Text = "Equips your gears with the highest cash multiplier." }) end}})
-
-    gears_tab.Button({Text = 'Unequip Gears', Callback = function()
-        handler:unequip_gears()
-    end, Menu = { Information = function(self) UI.Banner({Text = "Unequips whatever gears you are wearing." }) end}})
-
-    gears_tab.Label({Text = 'Gear Remote Discovery'})
-
-    gears_tab.Button({Text = 'Scan Gear Remotes', Callback = function()
-        handler:scan_gear_remotes(true)
-    end, Menu = { Information = function(self) UI.Banner({Text = "Lists every gear/equip/tool remote in the console and auto-picks the equip/unequip ones." }) end}})
-
-    gears_tab.TextField({Text = 'Manual remote path (e.g. ReplicatedStorage.Services.GearService.RF.EquipGear)', Type = 'NoSuggestions', Callback = function(value)
-        gear_state.manual_path = (type(value) == 'string' and value ~= '') and value or nil
-        UI.Banner({Text = gear_state.manual_path and ('Manual gear remote path set: ' .. gear_state.manual_path) or 'Manual gear remote path cleared.'})
-    end})
-end
-
-local other_tab = UI.New({Title = 'Other'}); do
-    other_tab.Label({Text = 'Other'})
-
-    other_tab.Button({Text = 'Server Hop', Callback = function()
-        handler:server_hop()
-    end, Menu = { Information = function(self) UI.Banner({Text = "Moves you to a different public server." }) end}})
-
-    other_tab.Label({Text = 'Close UI'})
-
-    -- The "box" beside Close UI: a Button whose TEXT is the current
-    -- keybind. Clicking it starts the rebind capture; whatever key the
-    -- user presses next becomes the new toggle key, and the button
-    -- text updates immediately.
-    KeybindButton = other_tab.Button({
-        Text = 'Close UI: ' .. close_ui_key.Name,
-        Callback = function()
-            waiting_for_bind = true
-            local ok = pcall(function() KeybindButton:SetText('Close UI: ... (press a key)') end)
-            if (not ok) then
-                warn('[CloseUI] Button ref missing - try again after the tab is visible.')
-            end
-            UI.Banner({Text = 'Press any key to set the Close UI keybind. Escape cancels.'})
-        end,
-        Menu = { Information = function(self) UI.Banner({Text = "Shows the current Close UI keybind. Click it, then press a key to rebind." }) end}
-    })
-
-    other_tab.Button({Text = 'Toggle UI (Manually Close / Open)', Callback = function()
-        toggle_ui()
-    end, Menu = { Information = function(self) UI.Banner({Text = "Same as pressing your keybind." }) end}})
-end
--- wire the keybind save bridge to the config system (Config is declared
--- further down in the script, so the bridge was empty until now)
-keybind_bridge.save = function(name)
-    Config.save('close_ui_key', name)
-end
-
--- restore a previously saved keybind
-do
-    local saved_key = Config.data['close_ui_key']
-    if (type(saved_key) == 'string') then
-        local ok, key = pcall(function() return Enum.KeyCode[saved_key] end)
-        if (ok and key) then
-            set_close_ui_key(key)
-        end
-    end
-end
-
-
-Config.load()
 
 if shared.afy then
     shared.afy:Disconnect()
