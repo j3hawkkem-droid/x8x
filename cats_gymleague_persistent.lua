@@ -788,17 +788,185 @@ local script_handler = {}; do
     end
 end
 
+-- // Settings persistence (toggles, powerup selection, manual farm, keybind)
+local settings_file = 'GymLeague_Cats_Settings.json'
+local can_save = (type(writefile) == 'function' and type(readfile) == 'function' and type(isfile) == 'function')
+local SavedSettings = { toggles = {}, keybind = 'RightShift' }
+local httpservice = service.HttpService
+local teleportservice = service.TeleportService
+local user_input_service = service.UserInputService
+
+if can_save then
+	pcall(function()
+		if isfile(settings_file) then
+			local decoded = httpservice:JSONDecode(readfile(settings_file))
+			if type(decoded) == 'table' then
+				if type(decoded.toggles) == 'table' then SavedSettings.toggles = decoded.toggles end
+				if type(decoded.powerups) == 'table' then SavedSettings.powerups = decoded.powerups end
+				if type(decoded.keybind) == 'string' then SavedSettings.keybind = decoded.keybind end
+				if type(decoded.manual_farm) == 'string' then SavedSettings.manual_farm = decoded.manual_farm end
+			end
+		end
+	end)
+end
+
+local function save_settings()
+	if not can_save then return end
+	pcall(function()
+		writefile(settings_file, httpservice:JSONEncode(SavedSettings))
+	end)
+end
+
+-- Wrapper around the Material toggle so every toggle is registered + auto-saved/restored
+local toggle_registry = {}
+local function Toggle(tab, config)
+	local key = config.Text or ('Toggle' .. tostring(#toggle_registry + 1))
+	local OldCallback = config.Callback
+
+	if (SavedSettings.toggles[key] ~= nil) then
+		config.Enabled = SavedSettings.toggles[key]
+	end
+
+	config.Callback = function(state)
+		if OldCallback then OldCallback(state) end
+		SavedSettings.toggles[key] = (state and true or false)
+		save_settings()
+	end
+
+	local ToggleObject = tab.Toggle(config)
+	toggle_registry[key] = ToggleObject
+
+	return ToggleObject
+end
+
+-- // Server utilities
+local function http_get_json(url)
+	local ok, body = pcall(function() return game:HttpGet(url) end)
+	if (not ok) or (not body) then return nil end
+	local ok2, data = pcall(function() return httpservice:JSONDecode(body) end)
+	if ok2 then return data end
+	return nil
+end
+
+local function rejoin_server()
+	task.spawn(function()
+		local place_id = game.PlaceId
+		local job_id = game.JobId
+
+		if (job_id ~= '') then
+			local ok = pcall(function()
+				teleportservice:TeleportToPlaceInstance(place_id, job_id, client)
+			end)
+			if (not ok) then
+				pcall(function() teleportservice:Teleport(place_id, client) end)
+			end
+		else
+			pcall(function() teleportservice:Teleport(place_id, client) end)
+		end
+	end)
+end
+
+local function server_hop()
+	task.spawn(function()
+		local place_id = game.PlaceId
+		local current_job = game.JobId
+		local candidates = {}
+		local cursor = ''
+
+		for _ = 1, 5 do
+			local url = ('https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100'):format(place_id)
+			if (cursor ~= '') then url = url .. '&cursor=' .. cursor end
+
+			local data = http_get_json(url)
+			if (not data or type(data.data) ~= 'table') then break end
+
+			for _, server in (data.data) do
+				if (type(server.id) == 'string' and server.id ~= current_job and (server.playing or 0) < (server.maxPlayers or 0)) then
+					table.insert(candidates, server.id)
+				end
+			end
+
+			cursor = data.nextPageCursor or ''
+			if (cursor == '') then break end
+		end
+
+		if (#candidates == 0) then
+			UI.Banner({Text = 'No other servers found, rejoining instead.'})
+			rejoin_server()
+			return
+		end
+
+		local target = candidates[math.random(#candidates)]
+		local ok = pcall(function()
+			teleportservice:TeleportToPlaceInstance(place_id, target, client)
+		end)
+		if (not ok) then
+			pcall(function() teleportservice:Teleport(place_id, client) end)
+		end
+	end)
+end
+
+-- // UI toggle + keybind
+local keybind_name = SavedSettings.keybind or 'RightShift'
+local ui_screen_gui = nil
+pcall(function()
+	local instance = getgenv and getgenv().OldInstance
+	if (instance and instance:IsA('ScreenGui')) then ui_screen_gui = instance end
+end)
+if (not ui_screen_gui) then
+	pcall(function()
+		ui_screen_gui = game:GetService('CoreGui'):FindFirstChild('@cats - Gym League') or nil
+	end)
+end
+if (not ui_screen_gui) then
+	pcall(function()
+		if gethui then ui_screen_gui = gethui():FindFirstChild('@cats - Gym League') or nil end
+	end)
+end
+
+local waiting_for_keybind = false
+local keybind_button
+
+local function toggle_ui_visibility()
+	if (ui_screen_gui) then
+		ui_screen_gui.Enabled = not ui_screen_gui.Enabled
+	end
+end
+
+user_input_service.InputBegan:Connect(function(input, processed)
+	if (input.UserInputType ~= Enum.UserInputType.Keyboard) then return end
+
+	local key = input.KeyCode.Name
+	if (key == 'Unknown') then return end
+
+	if (waiting_for_keybind) then
+		waiting_for_keybind = false
+		keybind_name = key
+		SavedSettings.keybind = key
+		save_settings()
+		if keybind_button then keybind_button:SetText('Keybind: ' .. key) end
+		return
+	end
+
+	if processed then return end
+	if (key == keybind_name) then
+		toggle_ui_visibility()
+	end
+end)
+
 local handler = script_handler.new()
+handler.selected_powerup = SavedSettings.powerups or {}
+handler.manual_farm = SavedSettings.manual_farm
 local main_tab = UI.New({Title = 'Main'}); do 
     main_tab.Label({Text = 'Farming'})
     
-    main_tab.Toggle({Text = 'Autofarm', Enabled = false, Callback = function(self)
+    Toggle(main_tab, {Text = 'Autofarm', Enabled = false, Callback = function(self)
         handler:toggle_autofarm(self)
     end, Menu = { Information = function(self) UI.Banner({Text = "Finds the best equipment to farm based on your stats." }) end}})
     handler.AutoFarmTextField = main_tab.TextField({Text = 'Status: '..handler.farmstatus, Type = 'NoSuggestions'})
 
     main_tab.Label({Text = 'Manual Farming'})
-    main_tab.Toggle({Text = 'Manual Farm', Enabled = false, Callback = function(self)
+    Toggle(main_tab, {Text = 'Manual Farm', Enabled = false, Callback = function(self)
         handler.manual = self
     end, Menu = { Information = function(self) UI.Banner({Text = "Turning on manual mode wont auto complete your stats." }) end}})
 
@@ -813,6 +981,8 @@ local main_tab = UI.New({Title = 'Main'}); do
 
     main_tab.Dropdown({Text = 'Choose manual farm', Options = EquipmentNaming, Callback = function(Value)
         handler.manual_farm = Value
+        SavedSettings.manual_farm = Value
+        save_settings()
     end})
     
     -- main_tab.Toggle({Text = 'Fast Mode (Blatant)', Enabled = false, Callback = function(self)
@@ -820,10 +990,10 @@ local main_tab = UI.New({Title = 'Main'}); do
     -- end, Menu = { Information = function(self) UI.Banner({Text = "Sometimes faster stat gain." }) end}})
 
     main_tab.Label({Text = 'Progression'})
-    main_tab.Toggle({Text = 'Auto Quest', Callback = function(self)
+    Toggle(main_tab, {Text = 'Auto Quest', Callback = function(self)
         handler.autoquest = self
     end})
-    main_tab.Toggle({Text = 'Auto World', Callback = function(self)
+    Toggle(main_tab, {Text = 'Auto World', Callback = function(self)
         if self then
             local GetQuest = workspace:FindFirstChild('GetQuest', true)
 
@@ -840,14 +1010,14 @@ local main_tab = UI.New({Title = 'Main'}); do
         handler.autonextworld = self
     end})
 
-    main_tab.Toggle({Text = 'Auto Body Alter', Callback = function(self)
+    Toggle(main_tab, {Text = 'Auto Body Alter', Callback = function(self)
         handler.auto_alter = self
     end})
-    main_tab.Toggle({Text = 'Auto Trainer', Callback = function(self)
+    Toggle(main_tab, {Text = 'Auto Trainer', Callback = function(self)
         handler.auto_trainer = self
     end})
     
-    main_tab.Toggle({Text = 'Auto Clicker', Enabled = false, Callback = function(self)
+    Toggle(main_tab, {Text = 'Auto Clicker', Enabled = false, Callback = function(self)
         handler.auto_click = self
     end, Menu = { Information = function(self) UI.Banner({Text = "Auto clicks for you when needed." }) end}})
 
@@ -856,22 +1026,35 @@ end
 local powerup_tab = UI.New({Title = 'PowerUps'}); do
     powerup_tab.Label({Text = 'Auto PowerUp'})
 
-    powerup_tab.Toggle({Text = 'Auto Buy Power-Up', Callback = function(self)
+    Toggle(powerup_tab, {Text = 'Auto Buy Power-Up', Callback = function(self)
         handler.buy_powerup = self
     end})
 
-    powerup_tab.Toggle({Text = 'Auto Use Power-Up', Callback = function(self)
+    Toggle(powerup_tab, {Text = 'Auto Use Power-Up', Callback = function(self)
         handler.use_powerup = self
     end})
 
-    powerup_tab.Toggle({Text = 'Choose All Power-Ups (Except Milk)', Callback = function(self)
+    Toggle(powerup_tab, {Text = 'Choose All Power-Ups (Except Milk)', Callback = function(self)
         handler.use_all_powerups = self
     end})
+
+    do
+        local saved_powerups = SavedSettings.powerups
+        if type(saved_powerups) == 'table' then
+            for powerup_name in pairs(powerups) do
+                if (saved_powerups[powerup_name] ~= nil) then
+                    powerups[powerup_name] = saved_powerups[powerup_name]
+                end
+            end
+        end
+    end
 
     powerup_tab.ChipSet({
         Text = "Choose Power-Ups",
         Callback = function(selected_powerup)
             handler.selected_powerup = selected_powerup
+            SavedSettings.powerups = selected_powerup
+            save_settings()
         end,
         Options = powerups
     })
@@ -879,7 +1062,7 @@ end
 
 local misc_tab = UI.New({Title = 'Misc'}); do
     misc_tab.Label({Text = 'Misc'})
-    misc_tab.Toggle({Text = 'Auto Competition', Callback = function(self)
+    Toggle(misc_tab, {Text = 'Auto Competition', Callback = function(self)
         handler.autocomp = self 
 
         if (not handler.autocomp) then
@@ -889,57 +1072,57 @@ local misc_tab = UI.New({Title = 'Misc'}); do
     end})
 
     misc_tab.Label({Text = 'Aura'})
-    misc_tab.Toggle({Text = 'Aura Roll', Callback = function(self)
+    Toggle(misc_tab, {Text = 'Aura Roll', Callback = function(self)
         handler.auraautoroll = self
     end})
 
-    misc_tab.Toggle({Text = 'Buy Aura Roll', Callback = function(self)
+    Toggle(misc_tab, {Text = 'Buy Aura Roll', Callback = function(self)
         handler.buyaurarolls = self
     end})
 
     misc_tab.Label({Text = 'Pose'})
-    misc_tab.Toggle({Text = 'Pose Roll', Callback = function(self)
+    Toggle(misc_tab, {Text = 'Pose Roll', Callback = function(self)
         handler.auraposeroll = self
     end})
 
-    misc_tab.Toggle({Text = 'Buy Pose Roll', Callback = function(self)
+    Toggle(misc_tab, {Text = 'Buy Pose Roll', Callback = function(self)
         handler.buyposerolls = self
     end})
 
     misc_tab.Label({Text = 'Fortune & Roulette'})
-    misc_tab.Toggle({Text = 'Auto Fortune Spin', Callback = function(self)
+    Toggle(misc_tab, {Text = 'Auto Fortune Spin', Callback = function(self)
         handler.auto_fortune = self
     end})
-    misc_tab.Toggle({Text = 'Auto Roulette Spin', Callback = function(self)
+    Toggle(misc_tab, {Text = 'Auto Roulette Spin', Callback = function(self)
         handler.auto_roulette = self
     end})
 
     misc_tab.Label({Text = 'Gear'})
-    misc_tab.Toggle({Text = 'Auto Gear Roll', Callback = function(self)
+    Toggle(misc_tab, {Text = 'Auto Gear Roll', Callback = function(self)
         handler.auto_gear = self
     end})
 end
 
 local progression_tab = UI.New({Title = 'Progression'}); do
     progression_tab.Label({Text = 'Daily & Battlepass'})
-    progression_tab.Toggle({Text = 'Auto Daily Gift', Callback = function(self)
+    Toggle(progression_tab, {Text = 'Auto Daily Gift', Callback = function(self)
         handler.auto_dailygift = self
     end})
-    progression_tab.Toggle({Text = 'Auto Battlepass Claim', Callback = function(self)
+    Toggle(progression_tab, {Text = 'Auto Battlepass Claim', Callback = function(self)
         handler.auto_battlepass = self
     end})
-    progression_tab.Toggle({Text = 'Claim Premium Too', Callback = function(self)
+    Toggle(progression_tab, {Text = 'Claim Premium Too', Callback = function(self)
         handler.auto_battlepass_premium = self
     end})
 
     progression_tab.Label({Text = 'World & Galaxy'})
-    progression_tab.Toggle({Text = 'Auto Galaxy Level', Callback = function(self)
+    Toggle(progression_tab, {Text = 'Auto Galaxy Level', Callback = function(self)
         handler.auto_galaxy = self
     end, Menu = { Information = function(self) UI.Banner({Text = "Buys next galaxy level when you can afford it." }) end}})
-    progression_tab.Toggle({Text = 'Auto Event Quests', Callback = function(self)
+    Toggle(progression_tab, {Text = 'Auto Event Quests', Callback = function(self)
         handler.auto_eventquest = self
     end})
-    progression_tab.Toggle({Text = 'Auto Clan Rewards', Callback = function(self)
+    Toggle(progression_tab, {Text = 'Auto Clan Rewards', Callback = function(self)
         handler.autoclaim_clan = self
     end})
 
@@ -947,9 +1130,36 @@ local progression_tab = UI.New({Title = 'Progression'}); do
     -- progression_tab.Toggle({Text = 'Auto Join Squid Game', Callback = function(self)
     --     handler.auto_squidgame = self
     -- end, Menu = { Information = function(self) UI.Banner({Text = "Teleports to squid game minigames when available." }) end}})
-    progression_tab.Toggle({Text = 'Auto Upgrade Training Mods', Callback = function(self)
+    Toggle(progression_tab, {Text = 'Auto Upgrade Training Mods', Callback = function(self)
         handler.auto_trainmods = self
     end, Menu = { Information = function(self) UI.Banner({Text = "Buys training modifier upgrades when affordable." }) end}})
+end
+
+local other_tab = UI.New({Title = 'Other'}); do
+	other_tab.Label({Text = 'Server'})
+
+	other_tab.Button({Text = 'Server Hop', Callback = function()
+		server_hop()
+	end, Menu = { Information = function(self) UI.Banner({Text = "Joins a different public server." }) end}})
+
+	other_tab.Button({Text = 'Rejoin', Callback = function()
+		rejoin_server()
+	end, Menu = { Information = function(self) UI.Banner({Text = "Rejoins the current server." }) end}})
+
+	other_tab.Label({Text = 'UI'})
+
+	other_tab.Button({Text = 'Close UI', Callback = function()
+		if (ui_screen_gui) then
+			ui_screen_gui.Enabled = false
+		end
+	end, Menu = { Information = function(self) UI.Banner({Text = "Hides the UI. Use your keybind to reopen it." }) end}})
+
+	keybind_button = other_tab.Button({Text = 'Keybind: ' .. keybind_name, Callback = function()
+		if (not waiting_for_keybind) then
+			waiting_for_keybind = true
+			keybind_button:SetText('Press any key...')
+		end
+	end, Menu = { Information = function(self) UI.Banner({Text = "Click, then press the key you want to toggle the UI open/closed." }) end}})
 end
 
 if shared.afy then
